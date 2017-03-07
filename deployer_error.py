@@ -1,0 +1,3 @@
+class DeployerError(Exception):
+    pass
+
