@@ -1,7 +1,9 @@
 from abc import ABCMeta
 from pathlib import PurePosixPath
 from threading import Lock
+from time import sleep
 
+from deployer_error import DeployerError
 from linux import Distro
 from ssh import Ssh
 
@@ -27,7 +29,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         if self._pg_service is None:
             distro = self.distro
             if distro == Distro.CENTOS:
-                self._pg_service = f"postgresql-{pg_version}"
+                self._pg_service = f"postgresql-{Postgres.pg_version}"
             elif distro in (Distro.UBUNTU, Distro.DEBIAN):
                 self._pg_service = f"postgresql"
         return self._pg_service
@@ -35,23 +37,33 @@ class Postgres(Ssh, metaclass=ABCMeta):
     @property
     def pg_recovery_file(self):
         if self._pg_recovery_file is None:
-            self._pg_recovery_file = PurePosixPath(self.pg_data_directory) / "recovery.conf"
+            self._pg_recovery_file = PurePosixPath(
+                self.pg_data_directory) / "recovery.conf"
         return self._pg_recovery_file
 
     @property
     def pg_pcmk_recovery_file(self):
         if self._pg_pcmk_recovery_file is None:
-            self._pg_pcmk_recovery_file = PurePosixPath(self.pg_data_directory) / "recovery.conf.pcmk"
+            self._pg_pcmk_recovery_file = PurePosixPath(
+                self.pg_data_directory) / "recovery.conf.pcmk"
         return self._pg_pcmk_recovery_file
 
     @property
     def pg_hba_file(self):
-        if self._pg_hba_file is None:
+        tries = 0
+        while not self._pg_hba_file:
+            tries += 1
             self._pg_hba_file = self.pg_current_setting("hba_file")
+            if self._pg_hba_file:
+                break
+            sleep(1)
+            self.log("failed to get hba_file, waiting a second")
+            if tries > 10:
+                raise DeployerError('waited too long after hba_file setting')
         return self._pg_hba_file
 
     @property
-    def pg_data_directory(self):
+    def pg_data_directory(self) -> str:
         if self._pg_data_directory is None:
             self._pg_data_directory = self.pg_current_setting("data_directory")
         return self._pg_data_directory
@@ -96,7 +108,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         c = f'psql -c "{sql};"'
         self.ssh_run_check(c, user if user else self.pg_root_user)
 
-    def pg_current_setting(self, setting):
+    def pg_current_setting(self, setting) -> str:
         c = f'psql -t -c "select current_setting(\'{setting}\');"'
         o, e = self.ssh_run_check(c, self.pg_root_user)
         return o.read().decode('utf-8').strip()
@@ -105,19 +117,17 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.ssh_run_check(f"createdb {db}", self.pg_root_user)
 
     def pg_drop_db(self, db: str):
-        self.ssh_run_check(f"dropdb {db}", self.pg_root_user)
+        self.ssh_run(f"dropdb {db}", self.pg_root_user)
 
     def pg_create_replication_user(self):
-        """
-        createuser repl1 -c 5 --replication
-        """
         self.ssh_run_check(
             f'createuser {self.pg_replication_user} -c 5 --replication',
             self.pg_root_user)
 
     def pg_make_master(self, all_hosts):
         """
-        echo "host replication repl1 192.168.72.102/32 trust" >> 9.6/data/pg_hba.conf
+        pg_hba.conf:
+            host replication repl1 192.168.72.102/32 trust 
         alter system set wal_level to hot_standby;
         alter system set max_wal_senders to 5;
         alter system set wal_keep_segments to 32;
@@ -128,7 +138,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
         """
         cmds = [
             f'echo "host replication {h.pg_replication_user} {h.ip}/32 trust" ' 
-            f'>> {self.pg_hba_file}' for h in all_hosts]
+            f'>> {self.pg_hba_file}'
+            for h in all_hosts]
         self.ssh_run_check(cmds, self.pg_root_user)
         self.pg_set_param("wal_level", "replica")
         self.pg_set_param("max_wal_senders", "5")
@@ -164,11 +175,13 @@ class Postgres(Ssh, metaclass=ABCMeta):
         systemctl stop postgresql-9.6
         mv 9.6/data data_old
         pg_basebackup -h pg01 -D 9.6/data -U repl1 -v -P --xlog-method=stream
-        echo 'hot_standby = on' >> 9.6/data/postgresql.conf
-        echo 'standby_mode = on' >> 9.6/data/recovery.conf
-        echo "restore_command = 'rsync -pog pg01:wals_from_this/%f %p'" >> 9.6/data/recovery.conf
-        echo "primary_conninfo = 'host=192.168.72.101 port=5432 user=repl1'" >> 9.6/data/recovery.conf
-        echo "primary_slot_name = 'node_a_slot'" >> 9.6/data/recovery.conf
+        postgresql.conf:
+            hot_standby = on' 
+        recovery.conf:
+            standby_mode = on
+            restore_command = 'rsync -pog pg01:wals_from_this/%f %p'
+            primary_conninfo = 'host=192.168.72.101 port=5432 user=repl1'
+            primary_slot_name = 'node_a_slot'
         systemctl start postgresql-9.6
         """
         repl_user = master.pg_replication_user
@@ -225,3 +238,10 @@ class Postgres(Ssh, metaclass=ABCMeta):
             self.pg_execute(
                 f"SELECT * "
                 f"FROM pg_create_physical_replication_slot('{h.pg_slot}')")
+
+    def pg_restore_db(self, name, sql_file, cwd):
+        self.pg_drop_db(name)
+        self.pg_create_db(name)
+        self.ssh_run_check(
+            f"cd {cwd} && psql -d {name} < {sql_file}",
+            self.pg_root_user)

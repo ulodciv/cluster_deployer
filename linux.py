@@ -42,6 +42,7 @@ class Linux(VmBase, metaclass=ABCMeta):
                 continue
             self.users[user] = LinuxUser(user)
         self._added_pub_key = False
+        self.cluster_vip = None
 
     @abstractmethod
     def authorize_pub_key_for_root(self):
