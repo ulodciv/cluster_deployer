@@ -9,7 +9,7 @@ from deployer import Cluster
 
 def main(args):
     start = time()
-    with open("cluster.json") as f:
+    with open(args.file) as f:
         cluster_def = json.load(f)
     cluster = Cluster(cluster_def, args.no_threads)
     cluster.deploy()
