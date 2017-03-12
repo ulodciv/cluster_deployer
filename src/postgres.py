@@ -12,11 +12,11 @@ class Postgres(Ssh, metaclass=ABCMeta):
     pg_version = "9.6"
     pg_lock = Lock()
 
-    def __init__(self, *, pg_root_user, pg_replication_user, **kwargs):
+    def __init__(self, *, pg_user, pg_replication_user, **kwargs):
         super(Postgres, self).__init__(**kwargs)
-        self.pg_root_user = pg_root_user
+        self.pg_user = pg_user
         self.pg_replication_user = pg_replication_user
-        self.pg_slot = f"{self.name}_slot"
+        self.pg_slot = f"{self.name.replace('-', '_')}_slot"
         self._pg_service = None
         self._pg_data_directory = None
         self._pg_hba_file = None
@@ -48,18 +48,29 @@ class Postgres(Ssh, metaclass=ABCMeta):
                 self.pg_data_directory) / "recovery.conf.pcmk"
         return self._pg_pcmk_recovery_file
 
+    def pg_current_setting2(self, setting) -> str:
+        c = f'psql -t -c "select current_setting(\'{setting}\');"'
+        o, e = self.ssh_run_check(c, self.pg_user)
+        return o.read().decode('utf-8').strip()
+
+    def pg_current_setting(self, setting):
+        ret = None
+        tries = 0
+        while not ret:
+            tries += 1
+            ret = self.pg_current_setting2(setting)
+            if ret:
+                break
+            self.log(f"failed to get {setting}, will try again in one second")
+            sleep(1)
+            if tries > 10:
+                raise DeployerError(f'waited too long after {setting} setting')
+        return ret
+
     @property
     def pg_hba_file(self):
-        tries = 0
-        while not self._pg_hba_file:
-            tries += 1
+        if self._pg_hba_file is None:
             self._pg_hba_file = self.pg_current_setting("hba_file")
-            if self._pg_hba_file:
-                break
-            sleep(1)
-            self.log("failed to get hba_file, waiting a second")
-            if tries > 10:
-                raise DeployerError('waited too long after hba_file setting')
         return self._pg_hba_file
 
     @property
@@ -96,7 +107,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             conf_file = self.pg_config_file
         self.ssh_run_check(
             f'echo "{param} = \'{val}\'" >> {conf_file}',
-            self.pg_root_user)
+            self.pg_user)
 
     def _pg_add_to_recovery_conf(self, param, val):
         self._pg_add_to_conf(param, val, self.pg_recovery_file)
@@ -106,23 +117,18 @@ class Postgres(Ssh, metaclass=ABCMeta):
 
     def pg_execute(self, sql, user=None):
         c = f'psql -c "{sql};"'
-        self.ssh_run_check(c, user if user else self.pg_root_user)
-
-    def pg_current_setting(self, setting) -> str:
-        c = f'psql -t -c "select current_setting(\'{setting}\');"'
-        o, e = self.ssh_run_check(c, self.pg_root_user)
-        return o.read().decode('utf-8').strip()
+        self.ssh_run_check(c, user if user else self.pg_user)
 
     def pg_create_db(self, db: str):
-        self.ssh_run_check(f"createdb {db}", self.pg_root_user)
+        self.ssh_run_check(f"createdb {db}", self.pg_user)
 
     def pg_drop_db(self, db: str):
-        self.ssh_run(f"dropdb {db}", self.pg_root_user)
+        self.ssh_run(f"dropdb {db}", self.pg_user)
 
     def pg_create_replication_user(self):
         self.ssh_run_check(
             f'createuser {self.pg_replication_user} -c 5 --replication',
-            self.pg_root_user)
+            self.pg_user)
 
     def pg_make_master(self, all_hosts):
         """
@@ -140,7 +146,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             f'echo "host replication {h.pg_replication_user} {h.ip}/32 trust" ' 
             f'>> {self.pg_hba_file}'
             for h in all_hosts]
-        self.ssh_run_check(cmds, self.pg_root_user)
+        self.ssh_run_check(cmds, self.pg_user)
         self.pg_set_param("wal_level", "replica")
         self.pg_set_param("max_wal_senders", "5")
         self.pg_set_param("wal_keep_segments", "32")
@@ -149,7 +155,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_set_param("archive_command", "'cp %p ../../wals_from_this/%f'")
         self.pg_set_param("listen_addresses", "'*'")
         self.pg_set_param("hot_standby", "on")
-        self.pg_set_param("hot_standby_feedback ", "on")
+        self.pg_set_param("hot_standby_feedback", "on")
 
     def pg_write_recovery_for_pcmk(self):
         repl_user = self.pg_replication_user
@@ -157,7 +163,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         # self.ssh_run_check([
         #     f"mv {Postgres.pg_data_dir} data_old",
         #     f"pg_basebackup -h {master.name} -D {Postgres.pg_data_dir} -U {repl_user} -Xs"],
-        #     self.pg_root_user)
+        #     self.pg_user)
         # self._pg_add_to_conf("hot_standby", "on")
         # self._pg_add_to_conf("hot_standby_feedback ", "on")
         self._pg_add_to_pcmk_recovery_conf("standby_mode", "on")
@@ -190,7 +196,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             f"mv {master.pg_data_directory} data_old",
             f"pg_basebackup -h {master.name} -D {master.pg_data_directory} "
             f"-U {repl_user} -Xs"],
-            self.pg_root_user)
+            self.pg_user)
 
         """
         # self._pg_add_to_conf("hot_standby", "on")
@@ -208,11 +214,11 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.ssh_run_check(
             f"sed -i s/{master.name}/{self.name}/ "
             f"{master.pg_pcmk_recovery_file}",
-            self.pg_root_user)
+            self.pg_user)
         self.ssh_run_check(
             f"cp {master.pg_pcmk_recovery_file} "
             f"{master.pg_recovery_file}",
-            self.pg_root_user)
+            self.pg_user)
 
     def pg_create_user(self, user, super_user=False):
         attribs = " SUPERUSER" if super_user else ""
@@ -222,7 +228,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_execute(f"DROP USER {user}")
 
     def pg_create_wal_dir(self):
-        self.ssh_run_check('mkdir -p wals_from_this', self.pg_root_user)
+        self.ssh_run_check('mkdir -p wals_from_this', self.pg_user)
 
     def pg_stop(self):
         self.ssh_run_check(f"systemctl stop {self.pg_service}")
@@ -233,8 +239,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
     def pg_restart(self):
         self.ssh_run_check(f"systemctl restart {self.pg_service}")
 
-    def pg_add_replication_slots(self, all_hosts):
-        for h in all_hosts:
+    def pg_add_replication_slots(self, hosts):
+        for h in hosts:
             self.pg_execute(
                 f"SELECT * "
                 f"FROM pg_create_physical_replication_slot('{h.pg_slot}')")
@@ -244,4 +250,4 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_create_db(name)
         self.ssh_run_check(
             f"cd {cwd} && psql -d {name} < {sql_file}",
-            self.pg_root_user)
+            self.pg_user)

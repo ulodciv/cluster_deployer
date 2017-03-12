@@ -15,10 +15,10 @@ class VmBase(metaclass=ABCMeta):
     logging.getLogger("paramiko").setLevel(logging.WARNING)
     logger.setLevel(logging.DEBUG)
 
-    def __init__(self, *, vm_ova, name, **kwargs):
-        super(VmBase, self).__init__(**kwargs)
+    def __init__(self, *, ova, name, **kwargs):
+        super(VmBase, self).__init__()
         self.name = name
-        self.vm_ova = vm_ova
+        self.ova = ova
 
     @classmethod
     def class_log(cls, s: str, name=None):
@@ -37,10 +37,10 @@ class VmBase(metaclass=ABCMeta):
     def vm_start_and_get_ip(self, fail_if_already_running=True):
         pass
 
-    def boot_sleep(self, seconds=15):
-        self.log(f"booting or rebooting, sleeping {seconds} seconds...")
+    def boot_sleep(self, seconds=10):
+        self.log(f"sleeping {seconds} seconds...")
         sleep(seconds)
-        self.log("done sleeping upon booting or rebooting")
+        self.log("done sleeping")
 
 
 class VmWare(VmBase):
@@ -133,8 +133,8 @@ class Vbox(VmBase):
             raise DeployerError(f"vm {name} already exists")
         vmdk = Vbox.get_vbox_machine_dir() / name / f"{name}.vmdk"
         self.vbox_manage(
-            (f'import {self.vm_ova} --vsys 0 --vmname {name} '
-             f'--unit {Vbox.get_disk_unit_of_ova(self.vm_ova)} --disk "{vmdk}"'),
+            (f'import {self.ova} --vsys 0 --vmname {name} --unit '
+             f'{Vbox.get_disk_unit_of_ova(self.ova)} --disk "{vmdk}"'),
             False)
 
     def _del_ip_property(self):

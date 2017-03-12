@@ -17,7 +17,7 @@ class CentOsConfigFile(OrderedDict):
         return "".join(
             f"{k}={v}\n" for k, v in self.items())
 
-    def make_ifcfg_ip_static(self, ip, gw):
+    def make_ifcfg_ip_static(self, ip, gw=None):
         ipv6keys = [k for k in self if k.startswith("IPV6_")]
         for k in ipv6keys:
             del self[k]

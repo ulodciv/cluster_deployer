@@ -1,19 +1,15 @@
 from abc import ABCMeta
 from collections import OrderedDict
 from contextlib import contextmanager
-from pathlib import Path, PurePosixPath
-from time import sleep
-from threading import Lock
+from pathlib import PurePosixPath
+from threading import RLock
 
 from paramiko import (
-    RSAKey, SSHClient, AutoAddPolicy, SSHException, AuthenticationException)
+    SSHClient, AutoAddPolicy, SSHException, AuthenticationException)
 
 from deployer_error import DeployerError
 from hosts_file import HostsFile
 from linux import Linux
-
-PRIV_OPEN_SSH_KEY_FILE = Path(r"key/rsa_openssh_private.key")
-PUB_KEY_FILE = Path(r"key/rsa_pub.key")
 
 
 class PublicKey:
@@ -74,13 +70,12 @@ class AuthorizedKeys:
 
 
 class Ssh(Linux, metaclass=ABCMeta):
-    ssh_paramiko_key = RSAKey.from_private_key_file(str(PRIV_OPEN_SSH_KEY_FILE))
-    with PUB_KEY_FILE.open() as f:
-        ssh_public_key = f.read()
-    ssh_lock = Lock()
+    ssh_lock = RLock()
 
-    def __init__(self, **kwargs):
+    def __init__(self, paramiko_key, paramiko_pub_key, **kwargs):
         super(Ssh, self).__init__(**kwargs)
+        self.paramiko_key = paramiko_key
+        self.paramiko_pub_key = paramiko_pub_key
         self.file_locks = {}
 
     def authorize_pub_key_for_root(self):
@@ -95,9 +90,9 @@ class Ssh(Linux, metaclass=ABCMeta):
                 with sftp.file(str(auth_keys_file)) as f:
                     keys_str = f.read().decode('utf-8')
                 keys = AuthorizedKeys(keys_str)
-                if keys.has_rsa_key(Ssh.ssh_public_key):
+                if keys.has_rsa_key(self.paramiko_pub_key):
                     return
-                keys.add_or_update_full(Ssh.ssh_public_key)
+                keys.add_or_update_full(self.paramiko_pub_key)
                 sftp = ssh.open_sftp()
                 with sftp.file(str(auth_keys_file), "w") as f:
                     f.write(keys.get_authorized_keys_str())
@@ -112,13 +107,13 @@ class Ssh(Linux, metaclass=ABCMeta):
         if self.selinux_is_active():
             commands.append(f'{start} "restorecon -FR .ssh"')
         self.ssh_run_check(commands)
-        self.authorize_key(user_obj, Ssh.ssh_public_key, True)
+        self.authorize_key(user_obj, self.paramiko_pub_key, True)
 
     def get_lock_for_file(self, f):
         f = str(f)
         with Ssh.ssh_lock:
             if f not in self.file_locks:
-                self.file_locks[f] = Lock()
+                self.file_locks[f] = RLock()
         return self.file_locks[f]
 
     def authorize_key(self, user_obj, pub_key, use_root=False):
@@ -135,7 +130,7 @@ class Ssh(Linux, metaclass=ABCMeta):
                 key_comment = pub_key.rpartition(" ")[2]
                 if keys.has_rsa_key(pub_key):
                     self.log(
-                        f"{pub_key[:10]}...{key_comment} is already authorized")
+                        f"{pub_key[:10]}...{key_comment} already authorized")
                     return
                 keys.add_or_update_full(pub_key)
                 with sftp.file(str(auth_keys_file), "w") as f:
@@ -145,7 +140,6 @@ class Ssh(Linux, metaclass=ABCMeta):
     def put_ssh_key_on_other(self, other, user_obj):
         self.log(f"will add pub key of {user_obj.user} on {other.name}")
         other.authorize_key(user_obj, self._get_rsa_pub_key(user_obj))
-        sleep(0.3)
         self._connect_to_add_fingerprint(other, user_obj)
         self.log(f"key authentication to {other.ip} for {user_obj.user} ready")
         self.log(f"done adding pub key of {user_obj.user} on {other.name}")
@@ -167,11 +161,9 @@ class Ssh(Linux, metaclass=ABCMeta):
         if user_obj.public_ssh_key:
             return user_obj.public_ssh_key
         id_rsa_file = (
-            PurePosixPath(user_obj.home_dir) /
-            PurePosixPath(".ssh/id_rsa"))
+            PurePosixPath(user_obj.home_dir) / PurePosixPath(".ssh/id_rsa"))
         id_rsa_pub_file = (
-            PurePosixPath(user_obj.home_dir) /
-            PurePosixPath(".ssh/id_rsa.pub"))
+            PurePosixPath(user_obj.home_dir) / PurePosixPath(".ssh/id_rsa.pub"))
         with self.get_lock_for_file(id_rsa_file):
             with self.open_sftp(user_obj.user) as sftp:
                 try:
@@ -189,9 +181,7 @@ class Ssh(Linux, metaclass=ABCMeta):
         with SSHClient() as client:
             client.set_missing_host_key_policy(AutoAddPolicy())
             client.connect(
-                self.ip,
-                username="root",
-                password=self.root_password)
+                self.ip, username="root", password=self.root_password)
             yield client
 
     @contextmanager
@@ -204,14 +194,11 @@ class Ssh(Linux, metaclass=ABCMeta):
         with SSHClient() as client:
             client.set_missing_host_key_policy(AutoAddPolicy())
             try:
-                client.connect(
-                    self.ip,
-                    username=user,
-                    pkey=Ssh.ssh_paramiko_key)
+                client.connect(self.ip, username=user, pkey=self.paramiko_key)
             except AuthenticationException as e:
                 raise DeployerError(
-                    f"AuthenticationException raised while "
-                    f"connecting to {user}@{self.ip}:\n{e}")
+                    f"AuthenticationException {user}@{self.ip} ({self.name}):\n"
+                    f"{e}")
             yield client
 
     @contextmanager
@@ -230,13 +217,14 @@ class Ssh(Linux, metaclass=ABCMeta):
             i, o, e = ssh.exec_command(command)
         except SSHException as e:
             raise DeployerError(
-                f"an SSHException was raised while running command:\n"
+                f"{user}@{self.name}: SSHException for:\n"
                 f"{command}\non {self.name}:\n{e}")
         if check:
             exit_status = o.channel.recv_exit_status()
             if exit_status != 0:
                 raise DeployerError(
-                    f"on {self.name}\n{command}\nexited with {exit_status}:\n"
+                    f"{user}@{self.name}: got exit status {exit_status} for:\n"
+                    f"{command}\n"
                     f"stdout: {o.read().decode('utf-8')}\n"
                     f"stderr: {e.read().decode('utf-8')}")
         return o, e
