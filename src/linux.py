@@ -15,7 +15,7 @@ from vm import VmBase
 class Distro(Enum):
     UNKNOWN = auto()
     CENTOS = auto()
-    # UBUNTU = auto()
+    UBUNTU = auto()
     DEBIAN = auto()
 
 

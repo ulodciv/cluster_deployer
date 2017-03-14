@@ -1,0 +1,25 @@
+{
+  "ova": "C:\\dev\\debian9_1.ova",
+  "cluster_name": "PgCluster",
+  "virtual_ip": "192.168.72.202",
+  "users": ["root", "postgres", "repl1"],
+  "pg_user": "postgres",
+  "pg_replication_user": "repl1",
+  "root_password": "root",
+  "key_file": "key/rsa_openssh_private.key",
+  "pub_key_file": "key/rsa_pub.key",
+  "hosts": [
+    {
+      "name": "debian-pg-1",
+      "static_ip": "192.168.72.111"
+    },
+    {
+      "name": "debian-pg-2",
+      "static_ip": "192.168.72.112"
+    },
+    {
+      "name": "debian-pg-3",
+      "static_ip": "192.168.72.113"
+    }
+  ]
+}
