@@ -8,11 +8,15 @@ from deployer import Cluster
 
 
 def main(args):
+    logging.basicConfig(format='%(relativeCreated)d %(name)s: %(message)s')
+    logging.getLogger().setLevel(logging.DEBUG)
+    logging.getLogger("paramiko").setLevel(logging.WARNING)
     start = time()
     with open(args.file) as f:
         cluster_def = json.load(f)
     cluster = Cluster(cluster_def, args.no_threads)
     cluster.deploy()
+    logging.shutdown()
     print(f"took {timedelta(seconds=time() - start)}")
 
 
@@ -23,5 +27,4 @@ def parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
-    logging.basicConfig(format='%(message)s')
     main(parse_args())

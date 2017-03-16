@@ -8,6 +8,7 @@
   "root_password": "root",
   "key_file": "key/rsa_openssh_private.key",
   "pub_key_file": "key/rsa_pub.key",
+  "demo_db": "demo_db.xz",
   "hosts": [
     {
       "name": "debian-pg-1",

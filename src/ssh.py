@@ -3,9 +3,10 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import PurePosixPath
 from threading import RLock
+from typing import ContextManager
 
 from paramiko import (
-    SSHClient, AutoAddPolicy, SSHException, AuthenticationException)
+    SSHClient, AutoAddPolicy, SSHException, AuthenticationException, SFTPClient)
 
 from deployer_error import DeployerError
 from hosts_file import HostsFile
@@ -77,6 +78,12 @@ class Ssh(Linux, metaclass=ABCMeta):
         self.paramiko_key = paramiko_key
         self.paramiko_pub_key = paramiko_pub_key
         self.file_locks = {}
+
+    def sftp_put(self, localpath, remotepath, user="root"):
+        self.log(f"sftp put {localpath} {remotepath}...")
+        with self.open_sftp(user) as sftp:   # type: SFTPClient
+            sftp.put(str(localpath), str(remotepath))
+        self.log(f"sftp put {localpath} {remotepath} done")
 
     def authorize_pub_key_for_root(self):
         auth_keys_file = PurePosixPath("/root/.ssh/authorized_keys")

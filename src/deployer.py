@@ -3,6 +3,7 @@ from functools import partial
 from ipaddress import ip_interface, IPv4Interface, IPv4Address
 
 from paramiko import RSAKey
+from pathlib import Path, PurePosixPath
 
 from postgres import Postgres
 from vm import Vbox
@@ -20,6 +21,7 @@ class Cluster:
         self.ha_cluster_xml_file = f"cluster.xml"
         self.cluster_name = cluster_def["cluster_name"]
         self.virtual_ip = cluster_def["virtual_ip"]
+        self.demo_db = cluster_def["demo_db"]
         common = {k: v for k, v in cluster_def.items() if k != "hosts"}
         common["paramiko_key"] = RSAKey.from_private_key_file(
             common["key_file"])
@@ -35,6 +37,7 @@ class Cluster:
         self.no_threads = no_threads
 
     def deploy(self):
+        # parts 1 and 2 can safely be re-run
         self.deploy_part_1()
         self.deploy_part_2()
         self.deploy_part_3()
@@ -66,7 +69,7 @@ class Cluster:
     def deploy_part_3(self):
         master = self.master
         master.pg_start()
-        master.deploy_demo_db()
+        master.deploy_demo_db(self.demo_db)
         master.pg_create_replication_user()
         master.pg_make_master(self.vms)
         master.pg_restart()
@@ -195,11 +198,18 @@ class Vm(Vbox, Postgres):
         self.add_hosts_to_etc_hosts(vms)
         self.pg_create_wal_dir()
 
-    def deploy_demo_db(self):
-        db = "demo_db"
+    def deploy_demo_db(self, demo_db_file):
+        local_db_file = Path(demo_db_file)
+        db_file_name = local_db_file.name
+        remote_db_file = PurePosixPath("/tmp") / db_file_name
+        self.sftp_put(local_db_file, remote_db_file, self.pg_user)
+        db = local_db_file.stem
         self.ssh_run_check(
-            [f"tar -xf {db}.xz",
-             f"mv {db} /tmp/",
-             f"chown -R {self.pg_user}. /tmp/{db}"])
-        self.pg_restore_db(db, f"/tmp/{db}/install.sql", f"/tmp/{db}")
+            f"cd /tmp && tar -xf {db_file_name} && rm -f {db_file_name}",
+            self.pg_user)
+        self.pg_drop_db(db)
+        self.pg_create_db(db)
+        self.ssh_run_check(
+            f"cd /tmp && psql -d {db} < /tmp/{db}/install.sql",
+            self.pg_user)
         self.ssh_run_check(f'rm -rf /tmp/{db}')

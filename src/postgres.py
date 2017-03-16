@@ -244,10 +244,3 @@ class Postgres(Ssh, metaclass=ABCMeta):
             self.pg_execute(
                 f"SELECT * "
                 f"FROM pg_create_physical_replication_slot('{h.pg_slot}')")
-
-    def pg_restore_db(self, name, sql_file, cwd):
-        self.pg_drop_db(name)
-        self.pg_create_db(name)
-        self.ssh_run_check(
-            f"cd {cwd} && psql -d {name} < {sql_file}",
-            self.pg_user)
