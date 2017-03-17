@@ -85,16 +85,6 @@ class Postgres(Ssh, metaclass=ABCMeta):
             self._pg_config_file = self.pg_current_setting("config_file")
         return self._pg_config_file
 
-    @property
-    def pg_service(self):
-        if self._pg_service is None:
-            distro = self.distro
-            if distro == Distro.CENTOS:
-                self._pg_service = f"postgresql-{Postgres.pg_version}"
-            elif distro in (Distro.UBUNTU, Distro.DEBIAN):
-                self._pg_service = f"postgresql"
-        return self._pg_service
-
     def pg_set_param(self, param, val=None):
         if val is None:
             c = f"alter system reset {param}"

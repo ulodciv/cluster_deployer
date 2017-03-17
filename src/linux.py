@@ -1,10 +1,9 @@
-from collections import OrderedDict
-from contextlib import contextmanager
-from ipaddress import IPv4Interface
-
 import re
 from abc import ABCMeta, abstractmethod
+from collections import OrderedDict
+from contextlib import contextmanager
 from enum import Enum, auto
+from ipaddress import IPv4Interface
 from pathlib import PurePosixPath
 from time import sleep
 
@@ -95,7 +94,6 @@ class Linux(VmBase, metaclass=ABCMeta):
 
     def reboot(self):
         self.ssh_run("systemctl reboot")
-        self.boot_sleep()
 
     def set_hostname(self):
         self.ssh_run_check(f"hostnamectl set-hostname {self.name}")

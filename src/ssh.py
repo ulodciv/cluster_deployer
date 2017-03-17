@@ -3,7 +3,6 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import PurePosixPath
 from threading import RLock
-from typing import ContextManager
 
 from paramiko import (
     SSHClient, AutoAddPolicy, SSHException, AuthenticationException, SFTPClient)
@@ -114,7 +113,7 @@ class Ssh(Linux, metaclass=ABCMeta):
         if self.selinux_is_active():
             commands.append(f'{start} "restorecon -FR .ssh"')
         self.ssh_run_check(commands)
-        self.authorize_key(user_obj, self.paramiko_pub_key, True)
+        self.add_authorized_key(user_obj, self.paramiko_pub_key, True)
 
     def get_lock_for_file(self, f):
         f = str(f)
@@ -123,20 +122,17 @@ class Ssh(Linux, metaclass=ABCMeta):
                 self.file_locks[f] = RLock()
         return self.file_locks[f]
 
-    def authorize_keys(self, vms):
-        # on each host,
-        #    for each user:
-        #       add all pub keys of this user (implies pub key creation)
-        #    reload ssh
-        for username, user_obj in self.users.items():
-            keys = [vm._get_rsa_pub_key(username) for vm in self.vm]
-            self.log(f"will add pub keys of {username} on {other.name}")
-            self.add_authorized_keys(user_obj, keys)
-
-    def put_ssh_key_on_others(self, vms):
-        for user_obj in self.users.values():
+    def add_fingerprints(self, vms):
+        for username in self.users:
             for vm in vms:
-                self.put_ssh_key_on_other(vm, user_obj)
+                self._connect_to_add_fingerprint(vm, username)
+
+    def authorize_keys(self, vms):
+        for username, user_obj in self.users.items():
+            keys = [vm.get_pub_key(username) for vm in vms]
+            self.log(f"will add pub keys of {username}")
+            self.add_authorized_keys(user_obj, keys)
+        self.ssh_run("systemctl reload sshd")
 
     def add_authorized_key(self, user_obj, pub_key, use_root=False):
         self.add_authorized_keys(user_obj, [pub_key], use_root)
@@ -159,7 +155,7 @@ class Ssh(Linux, metaclass=ABCMeta):
                     f"{key_to_add[:10]}...{key_comment} already authorized")
                 continue
             keys_added = True
-            self.log(f"authorizing {pub_key[:10]}...{key_comment}")
+            self.log(f"authorizing {key_to_add[:10]}...{key_comment}")
             keys.add_or_update_full(key_to_add)
         if not keys_added:
             return
@@ -167,18 +163,11 @@ class Ssh(Linux, metaclass=ABCMeta):
             with sftp.file(str(auth_keys_file), "w") as f:
                 f.write(keys.get_authorized_keys_str())
 
-    def put_ssh_key_on_other(self, other, user_obj):
-        self.log(f"will add pub key of {user_obj.user} on {other.name}")
-        other.authorize_key(user_obj, self._get_rsa_pub_key(user_obj.user))
-        self._connect_to_add_fingerprint(other, user_obj)
-        self.log(f"key authentication to {other.ip} for {user_obj.user} ready")
-        self.log(f"done adding pub key of {user_obj.user} on {other.name}")
-
-    def _connect_to_add_fingerprint(self, other, user_obj):
+    def _connect_to_add_fingerprint(self, other, user):
         self.ssh_run_check(
             [f"ssh -o StrictHostKeyChecking=no {other.ip} true",
              f"ssh -o StrictHostKeyChecking=no {other.name} true"],
-            user_obj.user)
+            user)
 
     def _create_rsa_key_pair(self, user):
         self.ssh_run_check(
@@ -187,7 +176,7 @@ class Ssh(Linux, metaclass=ABCMeta):
              "chmod 600 .ssh/id_rsa"],
             user)
 
-    def _get_rsa_pub_key(self, user):
+    def get_pub_key(self, user):
         user_obj = self.users[user]
         if user_obj.public_ssh_key:
             return user_obj.public_ssh_key
