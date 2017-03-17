@@ -1,7 +1,7 @@
 {
   "ova": "C:\\dev\\centos7_3.ova",
   "cluster_name": "PgCluster",
-  "virtual_ip": "192.168.72.201",
+  "virtual_ip": "192.168.72.202",
   "users": ["root", "postgres", "repl1"],
   "pg_user": "postgres",
   "pg_replication_user": "repl1",
@@ -11,16 +11,16 @@
   "demo_db": "demo_db.xz",
   "hosts": [
     {
-      "name": "centos-pg-1",
-      "static_ip": "192.168.72.101"
+      "name": "debian-pg-1",
+      "static_ip": "192.168.72.111"
     },
     {
-      "name": "centos-pg-2",
-      "static_ip": "192.168.72.102"
+      "name": "debian-pg-2",
+      "static_ip": "192.168.72.112"
     },
     {
-      "name": "centos-pg-3",
-      "static_ip": "192.168.72.103"
+      "name": "debian-pg-3",
+      "static_ip": "192.168.72.113"
     }
   ]
 }

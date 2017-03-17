@@ -1,0 +1,26 @@
+{
+  "ova": "D:\\ovas\\ubuntu_zesty_1.ova",
+  "cluster_name": "UbuntuCluster",
+  "virtual_ip": "192.168.72.203",
+  "users": ["root", "postgres", "repl1"],
+  "pg_user": "postgres",
+  "pg_replication_user": "repl1",
+  "root_password": "root",
+  "key_file": "key/rsa_private.key",
+  "pub_key_file": "key/rsa_pub.key",
+  "demo_db": "demo_db.xz",
+  "hosts": [
+    {
+      "name": "ubuntu-pg-1",
+      "static_ip": "192.168.72.121"
+    },
+    {
+      "name": "ubuntu-pg-2",
+      "static_ip": "192.168.72.122"
+    },
+    {
+      "name": "ubuntu-pg-3",
+      "static_ip": "192.168.72.123"
+    }
+  ]
+}

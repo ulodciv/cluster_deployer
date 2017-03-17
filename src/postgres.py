@@ -61,9 +61,9 @@ class Postgres(Ssh, metaclass=ABCMeta):
             ret = self.pg_current_setting2(setting)
             if ret:
                 break
-            self.log(f"failed to get {setting}, will try again in one second")
-            sleep(1)
-            if tries > 10:
+            self.log(f"failed to get {setting}, will try again in two seconds")
+            sleep(2)
+            if tries > 30:
                 raise DeployerError(f'waited too long after {setting} setting')
         return ret
 

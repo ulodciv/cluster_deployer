@@ -63,6 +63,17 @@ class Cluster:
         self.call([partial(v.deploy, self.vms) for v in self.vms])
 
     def deploy_part_2(self):
+        # on each host,
+        #    for each user:
+        #       add all pub keys of this user (implies pub key creation)
+        #    reload ssh
+        # barrier
+        # on each host:
+        #     for each user
+        #         for each host
+        #             _connect_to_add_fingerprint
+        self.call(
+            [partial(v.authorize_keys, self.vms) for v in self.vms])
         self.call(
             [partial(v.put_ssh_key_on_others, self.vms) for v in self.vms])
 

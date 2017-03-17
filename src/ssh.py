@@ -123,30 +123,53 @@ class Ssh(Linux, metaclass=ABCMeta):
                 self.file_locks[f] = RLock()
         return self.file_locks[f]
 
-    def authorize_key(self, user_obj, pub_key, use_root=False):
+    def authorize_keys(self, vms):
+        # on each host,
+        #    for each user:
+        #       add all pub keys of this user (implies pub key creation)
+        #    reload ssh
+        for username, user_obj in self.users.items():
+            keys = [vm._get_rsa_pub_key(username) for vm in self.vm]
+            self.log(f"will add pub keys of {username} on {other.name}")
+            self.add_authorized_keys(user_obj, keys)
+
+    def put_ssh_key_on_others(self, vms):
+        for user_obj in self.users.values():
+            for vm in vms:
+                self.put_ssh_key_on_other(vm, user_obj)
+
+    def add_authorized_key(self, user_obj, pub_key, use_root=False):
+        self.add_authorized_keys(user_obj, [pub_key], use_root)
+
+    def add_authorized_keys(self, user_obj, pub_keys, use_root=False):
         user = user_obj.user
         auth_keys_file = (
             PurePosixPath(user_obj.home_dir) /
             PurePosixPath(".ssh/authorized_keys"))
         self.log(f"reading {auth_keys_file}")
-        with self.get_lock_for_file(auth_keys_file):
-            with self.open_sftp("root" if use_root else user) as sftp:
-                with sftp.file(str(auth_keys_file)) as f:
-                    keys_str = f.read().decode('utf-8')
-                keys = AuthorizedKeys(keys_str)
-                key_comment = pub_key.rpartition(" ")[2]
-                if keys.has_rsa_key(pub_key):
-                    self.log(
-                        f"{pub_key[:10]}...{key_comment} already authorized")
-                    return
-                keys.add_or_update_full(pub_key)
-                with sftp.file(str(auth_keys_file), "w") as f:
-                    f.write(keys.get_authorized_keys_str())
-                self.log(f"authorized {pub_key[:10]}...{key_comment}")
+        with self.open_sftp("root" if use_root else user) as sftp:
+            with sftp.file(str(auth_keys_file)) as f:
+                keys_str = f.read().decode('utf-8')
+        keys = AuthorizedKeys(keys_str)
+        keys_added = False
+        for key_to_add in pub_keys:
+            key_comment = key_to_add.rpartition(" ")[2]
+            if keys.has_rsa_key(key_to_add):
+                self.log(
+                    f"{key_to_add[:10]}...{key_comment} already authorized")
+                continue
+            keys_added = True
+            self.log(f"authorizing {pub_key[:10]}...{key_comment}")
+            keys.add_or_update_full(key_to_add)
+        if not keys_added:
+            return
+        with self.open_sftp("root" if use_root else user) as sftp:
+            with sftp.file(str(auth_keys_file), "w") as f:
+                f.write(keys.get_authorized_keys_str())
 
     def put_ssh_key_on_other(self, other, user_obj):
         self.log(f"will add pub key of {user_obj.user} on {other.name}")
-        other.authorize_key(user_obj, self._get_rsa_pub_key(user_obj))
+        other.authorize_key(user_obj, self._get_rsa_pub_key(user_obj.user))
         self._connect_to_add_fingerprint(other, user_obj)
         self.log(f"key authentication to {other.ip} for {user_obj.user} ready")
         self.log(f"done adding pub key of {user_obj.user} on {other.name}")
@@ -164,7 +187,8 @@ class Ssh(Linux, metaclass=ABCMeta):
              "chmod 600 .ssh/id_rsa"],
             user)
 
-    def _get_rsa_pub_key(self, user_obj):
+    def _get_rsa_pub_key(self, user):
+        user_obj = self.users[user]
         if user_obj.public_ssh_key:
             return user_obj.public_ssh_key
         id_rsa_file = (
@@ -212,11 +236,6 @@ class Ssh(Linux, metaclass=ABCMeta):
     def open_sftp(self, user="root"):
         with self.open_ssh(user) as ssh:
             yield ssh.open_sftp()
-
-    def put_ssh_key_on_others(self, vms):
-        for user_obj in self.users.values():
-            for vm in vms:
-                self.put_ssh_key_on_other(vm, user_obj)
 
     def ssh_run_(self, user, ssh, command, check):
         self.log(f"{user}: [{command}]")
