@@ -7,6 +7,9 @@ from ipaddress import IPv4Interface
 from pathlib import PurePosixPath
 from time import sleep
 
+from paramiko.ssh_exception import NoValidConnectionsError
+
+from deployer_error import DeployerError
 from hosts_file import CentOsConfigFile
 from vm import VmBase
 
@@ -240,5 +243,18 @@ class Linux(VmBase, metaclass=ABCMeta):
         sleep(sleep_for)
         self.log(f"slept {sleep_for} seconds")
         self.log(f"testing ssh connection to {self.ip}...")
-        with self.open_ssh() as _:
-            self.log(f"connection sucessful, IP is now {self.ip}")
+        attempts = 0
+        while True:
+            try:
+                attempts += 1
+                with self.open_ssh() as _:
+                    self.log(f"connection sucessful, IP is now {self.ip}")
+                    return
+            except NoValidConnectionsError as e:
+                if attempts > 20:
+                    raise DeployerError(
+                        f"failed connecting to {self.ip} too many times")
+                self.log(f"failed to connect on attempt {attempts}\n"
+                         f"go this error: {e}")
+                self.log(f"will try again in 1 second")
+                sleep(1)
