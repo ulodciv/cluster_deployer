@@ -1,6 +1,6 @@
 from unittest import TestCase
 
-from pgsqlms import (_query, RE_TPL_TIMELINE, RE_APP_NAME, ocf_local_nodename)
+from pgsqlms2 import (_query, RE_TPL_TIMELINE, RE_APP_NAME, ocf_local_nodename)
 
 
 tpl = """\

@@ -192,10 +192,6 @@ def ocf_maybe_random():
     return random.randint(0, 32766)
 
 
-def ocf_is_true(v):
-    return v in (True, 'yes', 'true', 1, '1', 'YES', 'TRUE', 'ja', 'on', 'ON')
-
-
 def ocf_is_clone():
     return int(env_else('OCF_RESKEY_CRM_meta_clone_max', 0)) > 0
 
@@ -350,6 +346,7 @@ def _pg_isready():
 
 # Run the given command as the "system_user" by forking away from root
 def _runas(cmd):
+    cmd = [str(c) for c in cmd]
     if os.fork() == 0:  # in child
         u = pwd.getpwnam(system_user)
         os.initgroups(system_user, u.pw_gid)
@@ -823,7 +820,7 @@ def _get_action_timeout():
         timeout = int(timeout) / 1000
         ocf_log_debug('_get_action_timeout: known timeout: {}', timeout)
         return timeout
-    ocf_log_debug('_get_action_timeout: known timeout env var not set: {}')
+    ocf_log_debug('_get_action_timeout: known timeout env var not set')
 
 
 # Start the local instance using pg_ctl
@@ -1388,7 +1385,6 @@ def pgsql_notify_pre_promote():
     # so we can avoid a race condition between the last successful monitor
     # on the previous master and the current promotion.
     rc, rs = _query('SELECT pg_last_xlog_receive_location()')
-
     if rc != 0:
         ocf_log_warn('pgsql_notify: could not query the current node LSN')
         # Return code are ignored during notifications...
@@ -1702,7 +1698,7 @@ if __name__ == "__main__":
     bindir_default = "/usr/bin"
     pgdata_default = "/var/lib/pgsql/data"
     pghost_default = "/tmp"
-    pgport_default = 5432
+    pgport_default = "5432"
     start_opts_default = ""
 
     system_user = env_else('OCF_RESKEY_system_user', system_user_default)
