@@ -395,7 +395,7 @@ def _query(query):
     if ans:
         ans = ans[:-1]
         for record in ans.split(RS):
-            rs.append([record.split(FS)])
+            rs.append(record.split(FS))
         ocf_log_debug('_query: @res: {}', rs)
     # Possible return codes:
     #  -1: wrong parameters
