@@ -170,17 +170,14 @@ class Cluster:
             f"resource create pgsql-master-ip ocf:heartbeat:IPaddr2 "
             f"ip={ipv4.ip} cidr_netmask={ipv4.network.prefixlen}")
         self.master.ssh_run_check(
-            f"pcs -f {self.ha_cluster_xml_file} "
-            f"constraint colocation add pgsql-master-ip "
-            f"with master pgsql-ha INFINITY")
+            f"pcs -f {self.ha_cluster_xml_file} constraint colocation add "
+            f"pgsql-master-ip with master pgsql-ha INFINITY")
         self.master.ssh_run_check(
-            f"pcs -f {self.ha_cluster_xml_file} "
-            f"constraint order promote pgsql-ha "
-            f"then start pgsql-master-ip symmetrical=false")
+            f"pcs -f {self.ha_cluster_xml_file} constraint order promote "
+            f"pgsql-ha then start pgsql-master-ip symmetrical=false")
         self.master.ssh_run_check(
-            f"pcs -f {self.ha_cluster_xml_file} "
-            f"constraint order demote pgsql-ha "
-            f"then stop pgsql-master-ip symmetrical=false")
+            f"pcs -f {self.ha_cluster_xml_file} constraint order demote "
+            f"pgsql-ha then stop pgsql-master-ip symmetrical=false")
 
     def ha_import_xml(self):
         self.master.ssh_run_check(

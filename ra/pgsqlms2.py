@@ -2,7 +2,6 @@
 import locale
 import os
 import pprint
-import random
 import datetime
 import pwd
 import re
@@ -11,13 +10,14 @@ import sys
 import tempfile
 from collections import defaultdict
 from distutils.version import StrictVersion
+from functools import partial
 from itertools import izip_longest, chain
 from tempfile import gettempdir
 from time import sleep
 
 
 VERSION = "1.0"
-PROGRAM = 'postgresql_ra'
+PROGRAM = 'pgsqlms2'
 OCF_SUCCESS = 0
 OCF_ERR_GENERIC = 1
 OCF_ERR_ARGS = 2
@@ -30,6 +30,11 @@ OCF_RUNNING_MASTER = 8
 OCF_FAILED_MASTER = 9
 nodename = None
 exit_code = 0
+RE_TPL_TIMELINE = re.compile(
+    r"^\s*recovery_target_timeline\s*=\s*'?latest'?\s*$", re.M)
+RE_STANDBY_MODE = re.compile(r"^\s*standby_mode\s*=\s*'?on'?\s*$", re.M)
+RE_APP_NAME = re.compile(
+    r"^\s*primary_conninfo\s*=.*['\s]application_name=(?P<name>.*?)['\s]", re.M)
 
 
 def del_env(k):
@@ -135,24 +140,15 @@ def ha_debug(*args):
         sys.stderr.write("{}: {} {}\n".format(logtag, hadate(), ' '.join(args)))
 
 
-def ocf_log_crit(msg, *args):
-    ha_log("CRIT: " + msg.format(*args))
+def ocf_log(level, msg, *args):
+    ha_log(level + ": " + msg.format(*args))
 
 
-def ocf_log_err(msg, *args):
-    ha_log("ERROR: " + msg.format(*args))
-
-
-def ocf_log_warn(msg, *args):
-    ha_log("WARNING: " + msg.format(*args))
-
-
-def ocf_log_info(msg, *args):
-    ha_log("INFO: " + msg.format(*args))
-
-
-def ocf_log_debug(msg, *args):
-    ha_debug("DEBUG: " + msg.format(*args))
+ocf_log_crit = partial(ocf_log, "CRIT")
+ocf_log_err = partial(ocf_log, "ERROR")
+ocf_log_warn = partial(ocf_log, "WARNING")
+ocf_log_info = partial(ocf_log, "INFO")
+ocf_log_debug = partial(ocf_log, "DEBUG")
 
 
 # Parse and returns the notify environment variables in a convenient structure
@@ -186,10 +182,6 @@ def ocf_notify_env():
                 d['uname'] = uname
             notify_env[action].append(d)
     return notify_env
-
-
-def ocf_maybe_random():
-    return random.randint(0, 32766)
 
 
 def ocf_is_clone():
@@ -240,11 +232,6 @@ def file_is_not_empty(f):
         return os.stat(f).st_size > 0
     except OSError:
         return False
-
-
-RE_TPL_TIMELINE = re.compile(r"^\s*recovery_target_timeline\s*=\s*'?latest'?\s*$", re.M)
-RE_STANDBY_MODE = re.compile(r"^\s*standby_mode\s*=\s*'?on'?\s*$", re.M)
-RE_APP_NAME = re.compile(r"^\s*primary_conninfo\s*=.*['\s]application_name=(?P<name>.*?)['\s]", re.M)
 
 
 def pgsql_validate_all():
@@ -375,9 +362,9 @@ def _query(query):
     os.write(tmp_fh, query)
     os.write(tmp_fh, "\n")
     os.chmod(tmp_filename, 0o644)
-
     # Change the effective user to the given system_user so after forking
     # the given uid to the process should allow psql to connect w/o password
+
     def demote():
         os.seteuid(pwd.getpwnam(system_user).pw_uid)
 
@@ -406,19 +393,18 @@ def _query(query):
     return rc, rs
 
 
-# Check the write_location of all secondaries, and adapt their master score so
+# Check the write_location of secondaries, and adapt their master score so
 # that the instance closest to the master will be the selected candidate should
 # a promotion be triggered.
 # NOTE: This is only a hint to pacemaker! The selected candidate to promotion
-# actually re-check it is the best candidate and force a re-election by failing
-# if a better one exists. This avoid a race condition between the call of the
-# monitor action and the promotion where another slave might have catchup faster
-# with the master.
-# NOTE: we cannot directly use the write_location, neither a lsn_diff value as
-# promotion score as Pacemaker considers any value greater than 1,000,000 as
-# INFINITY.
+# actually re-checks that it is the best candidate and forces a re-election by
+# failing if a better one exists.
+# This avoid a race condition between the call of the monitor action and the
+# promotion where another slave might have catchup faster with the master.
+# NOTE: we cannot directly use write_location, nor lsn_diff as promotion score
+# because Pacemaker considers any value greater than 1,000,000 to be INFINITY.
 #
-# This sub is supposed to be executed from a master monitor action.
+# Supposed to be called from a master monitor action.
 def _check_locations():
     # Call crm_node to exclude nodes that are not part of the cluster at this
     # point.
@@ -618,7 +604,6 @@ def _pg_ctl_status():
 
 # Check to confirm if the instance is really stopped as _pg_isready stated
 # and if it was propertly shut down.
-#
 def _confirm_stopped():
     # Check the postmaster process status.
     pgctlstatus_rc = _pg_ctl_status()
@@ -812,8 +797,6 @@ def _create_recovery_conf():
 
 
 # get the timeout for the current action given from environment var
-# Returns   timeout as integer
-#           undef if unknown
 def _get_action_timeout():
     timeout = env_else('OCF_RESKEY_CRM_meta_timeout')
     if timeout is not None:
@@ -1500,119 +1483,120 @@ def pgsql_reload():
 
 
 def ocf_meta_data():
-    print("""\<?xml version="1.0"?>
-        <!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
-        <resource-agent name="pgsqlsr">
-          <version>1.0</version>
+    print("""\
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="pgsqlsr">
+  <version>1.0</version>
 
-          <longdesc lang="en">
-            Resource script for PostgreSQL in replication. It manages PostgreSQL servers using streaming replication as an HA resource.
-          </longdesc>
-          <shortdesc lang="en">Manages PostgreSQL servers in replication</shortdesc>
-          <parameters>
-            <parameter name="system_user" unique="0" required="0">
-              <longdesc lang="en">
-                System user account used to run the PostgreSQL server
-              </longdesc>
-              <shortdesc lang="en">PostgreSQL system User</shortdesc>
-              <content type="string" default="$system_user_default" />
-            </parameter>
+  <longdesc lang="en">
+    Resource script for PostgreSQL in replication. It manages PostgreSQL servers using streaming replication as an HA resource.
+  </longdesc>
+  <shortdesc lang="en">Manages PostgreSQL servers in replication</shortdesc>
+  <parameters>
+    <parameter name="system_user" unique="0" required="0">
+      <longdesc lang="en">
+        System user account used to run the PostgreSQL server
+      </longdesc>
+      <shortdesc lang="en">PostgreSQL system User</shortdesc>
+      <content type="string" default="$system_user_default" />
+    </parameter>
 
-            <parameter name="bindir" unique="0" required="0">
-              <longdesc lang="en">
-                Path to the directory storing the PostgreSQL binaries. The agent uses psql, pg_isready, pg_controldata and pg_ctl.
-              </longdesc>
-              <shortdesc lang="en">Path to the PostgreSQL binaries</shortdesc>
-              <content type="string" default="$bindir_default" />
-            </parameter>
+    <parameter name="bindir" unique="0" required="0">
+      <longdesc lang="en">
+        Path to the directory storing the PostgreSQL binaries. The agent uses psql, pg_isready, pg_controldata and pg_ctl.
+      </longdesc>
+      <shortdesc lang="en">Path to the PostgreSQL binaries</shortdesc>
+      <content type="string" default="$bindir_default" />
+    </parameter>
 
-            <parameter name="pgdata" unique="1" required="0">
-              <longdesc lang="en">
-                Path to the data directory, e.g. PGDATA
-              </longdesc>
-              <shortdesc lang="en">Path to the data directory</shortdesc>
-              <content type="string" default="$pgdata_default" />
-            </parameter>
+    <parameter name="pgdata" unique="1" required="0">
+      <longdesc lang="en">
+        Path to the data directory, e.g. PGDATA
+      </longdesc>
+      <shortdesc lang="en">Path to the data directory</shortdesc>
+      <content type="string" default="$pgdata_default" />
+    </parameter>
 
-            <parameter name="datadir" unique="1" required="0">
-              <longdesc lang="en">
-                Path to the directory set in data_directory from your postgresql.conf file. This parameter
-                has the same default than PostgreSQL itself: the pgdata parameter value. Unless you have a
-                special PostgreSQL setup and you understand this parameter, ignore it.
-              </longdesc>
-              <shortdesc lang="en">Path to the directory set in data_directory from your postgresql.conf file</shortdesc>
-              <content type="string" default="PGDATA" />
-            </parameter>
+    <parameter name="datadir" unique="1" required="0">
+      <longdesc lang="en">
+        Path to the directory set in data_directory from your postgresql.conf file. This parameter
+        has the same default than PostgreSQL itself: the pgdata parameter value. Unless you have a
+        special PostgreSQL setup and you understand this parameter, ignore it.
+      </longdesc>
+      <shortdesc lang="en">Path to the directory set in data_directory from your postgresql.conf file</shortdesc>
+      <content type="string" default="PGDATA" />
+    </parameter>
 
-            <parameter name="pghost" unique="0" required="0">
-              <longdesc lang="en">
-                Host IP address or unix socket folder the instance is listening on.
-              </longdesc>
-              <shortdesc lang="en">Instance IP or unix socket folder</shortdesc>
-              <content type="string" default="$pghost_default" />
-            </parameter>
+    <parameter name="pghost" unique="0" required="0">
+      <longdesc lang="en">
+        Host IP address or unix socket folder the instance is listening on.
+      </longdesc>
+      <shortdesc lang="en">Instance IP or unix socket folder</shortdesc>
+      <content type="string" default="$pghost_default" />
+    </parameter>
 
-            <parameter name="pgport" unique="0" required="0">
-              <longdesc lang="en">
-                Port the instance is listening on.
-              </longdesc>
-              <shortdesc lang="en">Instance port</shortdesc>
-              <content type="integer" default="$pgport_default" />
-            </parameter>
+    <parameter name="pgport" unique="0" required="0">
+      <longdesc lang="en">
+        Port the instance is listening on.
+      </longdesc>
+      <shortdesc lang="en">Instance port</shortdesc>
+      <content type="integer" default="$pgport_default" />
+    </parameter>
 
-            <parameter name="recovery_template" unique="1" required="0">
-              <longdesc lang="en">
-                Path to the recovery.conf template. This file is simply copied to \$PGDATA
-                before starting the instance as slave
-              </longdesc>
-              <shortdesc lang="en">Path to the recovery.conf template.</shortdesc>
-              <content type="string" default="PGDATA/recovery.conf.pcmk" />
-            </parameter>
+    <parameter name="recovery_template" unique="1" required="0">
+      <longdesc lang="en">
+        Path to the recovery.conf template. This file is simply copied to \$PGDATA
+        before starting the instance as slave
+      </longdesc>
+      <shortdesc lang="en">Path to the recovery.conf template.</shortdesc>
+      <content type="string" default="PGDATA/recovery.conf.pcmk" />
+    </parameter>
 
-            <parameter name="start_opts" unique="0" required="0">
-              <longdesc lang="en">
-                Additionnal arguments given to the postgres process on startup.
-                See "postgres --help" for available options. Usefull when the
-                postgresql.conf file is not in the data directory (PGDATA), eg.:
-                "-c config_file=/etc/postgresql/9.3/main/postgresql.conf".
-              </longdesc>
-              <shortdesc lang="en">Additionnal arguments given to the postgres process on startup.</shortdesc>
-              <content type="string" default="$start_opts_default" />
-            </parameter>
+    <parameter name="start_opts" unique="0" required="0">
+      <longdesc lang="en">
+        Additionnal arguments given to the postgres process on startup.
+        See "postgres --help" for available options. Usefull when the
+        postgresql.conf file is not in the data directory (PGDATA), eg.:
+        "-c config_file=/etc/postgresql/9.3/main/postgresql.conf".
+      </longdesc>
+      <shortdesc lang="en">Additionnal arguments given to the postgres process on startup.</shortdesc>
+      <content type="string" default="$start_opts_default" />
+    </parameter>
 
-          </parameters>
-          <actions>
-            <action name="start" timeout="60" />
-            <action name="stop" timeout="60" />
-            <action name="status" timeout="20" />
-            <action name="reload" timeout="20" />
-            <action name="promote" timeout="30" />
-            <action name="demote" timeout="120" />
-            <action name="monitor" depth="0" timeout="10" interval="15"/>
-            <action name="monitor" depth="0" timeout="10" interval="15" role="Master"/>
-            <action name="monitor" depth="0" timeout="10" interval="16" role="Slave"/>
-            <action name="notify" timeout="60" />
-            <action name="meta-data" timeout="5" />
-            <action name="validate-all" timeout="5" />
-            <action name="methods" timeout="5" />
-          </actions>
-        </resource-agent>
-    """)
+  </parameters>
+  <actions>
+    <action name="start" timeout="60" />
+    <action name="stop" timeout="60" />
+    <action name="status" timeout="20" />
+    <action name="reload" timeout="20" />
+    <action name="promote" timeout="30" />
+    <action name="demote" timeout="120" />
+    <action name="monitor" depth="0" timeout="10" interval="15"/>
+    <action name="monitor" depth="0" timeout="10" interval="15" role="Master"/>
+    <action name="monitor" depth="0" timeout="10" interval="16" role="Slave"/>
+    <action name="notify" timeout="60" />
+    <action name="meta-data" timeout="5" />
+    <action name="validate-all" timeout="5" />
+    <action name="methods" timeout="5" />
+  </actions>
+</resource-agent>
+""")
 
 
 def ocf_methods():
     print("""\
-        start
-        stop
-        reload
-        promote
-        demote
-        monitor
-        notify
-        methods
-        meta-data
-        validate-all
-    """)
+start
+stop
+reload
+promote
+demote
+monitor
+notify
+methods
+meta-data
+validate-all
+""")
 
 
 def hadate():
@@ -1625,10 +1609,9 @@ def set_logtag():
     inst = env_else('OCF_RESOURCE_INSTANCE', "")
     if inst != "":
         os.environ['HA_LOGTAG'] = "{}({})[{}]".format(
-            __SCRIPT_NAME, inst, os.getpid())
+            script_name, inst, os.getpid())
     else:
-        os.environ['HA_LOGTAG'] = "{}[{}]".format(
-            __SCRIPT_NAME, os.getpid())
+        os.environ['HA_LOGTAG'] = "{}[{}]".format(script_name, os.getpid())
 
 
 if __name__ == "__main__":
@@ -1649,13 +1632,7 @@ if __name__ == "__main__":
     HA_DOCDIR = env_else('HA_DOCDIR', '/usr/share/doc/heartbeat')
     HA_VARRUN = env_else('HA_VARRUN', '/var/run/')
     HA_VARLOCK = env_else('HA_VARLOCK', '/var/lock/subsys/')
-    __SCRIPT_NAME = os.environ.get('__SCRIPT_NAME', None)
-    if not __SCRIPT_NAME:
-        if __file__:
-            __SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
-
-    ocf_prefix = '/usr'
-    ocf_exec_prefix = '/usr'
+    script_name = os.path.splitext(os.path.basename(__file__))[0]
 
     __OCF_ACTION = sys.argv[1]
     del_env('LC_ALL')
@@ -1679,7 +1656,7 @@ if __name__ == "__main__":
             "ERROR: OCF_ROOT points to non-directory " + os.environ["OCF_ROOT"])
         sys.exit(OCF_ERR_GENERIC)
     if env_else('OCF_RESOURCE_TYPE', '') == '':
-        os.environ["OCF_RESOURCE_TYPE"] = __SCRIPT_NAME
+        os.environ["OCF_RESOURCE_TYPE"] = script_name
     if env_else('OCF_RA_VERSION_MAJOR', '') == '':
         os.environ["OCF_RA_VERSION_MAJOR"] = 'default'
     else:
