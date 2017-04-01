@@ -6,12 +6,19 @@ from pgsqlms2 import (
     RE_TPL_TIMELINE, RE_APP_NAME, RE_PG_CLUSTER_STATE,
     get_pg_cluster_state,
     pg_execute, get_pg_ctl_status, get_ocf_status,
-    OCF_NOT_RUNNING, OCF_RUNNING_MASTER, get_ocf_nodename)
+    OCF_NOT_RUNNING, OCF_RUNNING_MASTER, get_ocf_nodename, get_ha_nodes,
+    run_pgisready, confirm_stopped, OCF_ERR_GENERIC, OCF_SUCCESS,
+    get_recovery_tpl, pg_validate_all, pg_start)
 
 
 tpl = """\
 primary_conninfo = 'user=postgres host=127.0.0.1 port=15432 application_name=pc1234.home'
 recovery_target_timeline = 'latest'
+"""
+tpl2 = """\
+standby_mode = 'on'
+recovery_target_timeline = 'latest'
+primary_conninfo = 'host=None port=15432 user=repl1 application_name=centos-pg-1'
 """
 pg_conf_additions = """\
 cat <<-EOC>> {}/postgresql.conf
@@ -32,7 +39,7 @@ pg_control last modified:             Fri 31 Mar 2017 10:01:29 PM CEST
 """
 
 
-class TestPgFunctions(TestCase):
+class TestPg(TestCase):
     pg_data_dir = "/tmp/pgdata_test_pgsqlms2"
     pg_bin = "/usr/pgsql-9.6/bin"
     pg_port = "15432"
@@ -87,6 +94,31 @@ class TestPgFunctions(TestCase):
         except subprocess.CalledProcessError:
             pass
 
+    def test_pg_validate_all(self):
+        with open(get_recovery_tpl(), "w") as f:
+            f.write(tpl2)
+        rc = pg_validate_all()
+        os.remove(get_recovery_tpl())
+        self.assertEqual(OCF_SUCCESS, rc)
+
+    def test_pgsql_start(self):
+        self.assertRaises(SystemExit, pg_start)
+        with open(get_recovery_tpl(), "w") as f:
+            f.write(tpl2)
+        self.assertEqual(OCF_SUCCESS, pg_start())
+
+    def test_run_pgisready(self):
+        rc = run_pgisready()
+        self.assertEqual(2, rc)
+        self.start_pg()
+        rc = run_pgisready()
+        self.assertEqual(0, rc)
+
+    def test_confirm_stopped(self):
+        self.assertEqual(OCF_NOT_RUNNING, confirm_stopped())
+        self.start_pg()
+        self.assertEqual(OCF_ERR_GENERIC, confirm_stopped())
+
     def test_get_pg_ctl_status(self):
         self.assertEqual(3, get_pg_ctl_status())
         self.start_pg()
@@ -123,7 +155,12 @@ class TestPgFunctions(TestCase):
         self.assertTrue(True)
 
 
-class TestOcfFunctions(TestCase):
+class TestHa(TestCase):
+
+    def test_get_ha_nodes(self):
+        nodes = get_ha_nodes()
+        self.assertIn('centos-pg-1', nodes)
+
     def test_get_ocf_nodename(self):
         n = get_ocf_nodename()
         self.assertEqual(n, 'centos-pg-1')
