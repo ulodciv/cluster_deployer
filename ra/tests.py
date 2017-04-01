@@ -5,7 +5,7 @@ from unittest import TestCase
 from pgsqlms2 import (
     RE_TPL_TIMELINE, RE_APP_NAME, RE_PG_CLUSTER_STATE,
     get_pg_cluster_state,
-    pg_execute, get_pg_ctl_status, get_ocf_status_from_pg_cluster_state,
+    pg_execute, get_pg_ctl_status, get_ocf_status,
     OCF_NOT_RUNNING, OCF_RUNNING_MASTER, get_ocf_nodename)
 
 
@@ -113,10 +113,10 @@ class TestPgFunctions(TestCase):
         self.assertEqual([["25"]], rs)
 
     def test_get_ocf_status_from_pg_cluster_state(self):
-        ocf_status = get_ocf_status_from_pg_cluster_state()
+        ocf_status = get_ocf_status()
         self.assertEqual(ocf_status, OCF_NOT_RUNNING)
         self.start_pg()
-        ocf_status = get_ocf_status_from_pg_cluster_state()
+        ocf_status = get_ocf_status()
         self.assertEqual(ocf_status, OCF_RUNNING_MASTER)
 
     def test_dummy(self):
