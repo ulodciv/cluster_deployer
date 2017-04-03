@@ -14,7 +14,6 @@ from itertools import izip_longest, chain
 from tempfile import gettempdir
 from time import sleep
 
-
 script_name = os.path.splitext(os.path.basename(__file__))[0]
 VERSION = "1.0"
 PROGRAM = "pgsqlms2"
@@ -178,6 +177,11 @@ def get_crm_failcount():
     return os.path.join(get_ha_bin(), "crm_failcount")
 
 
+@memoize
+def get_pacemakerd():
+    return os.path.join(get_ha_bin(), "pacemakerd")
+
+
 def as_postgres_user():
     u = pwd.getpwnam(get_system_user())
     os.initgroups(get_system_user(), u.pw_gid)
@@ -327,24 +331,19 @@ def ocf_is_ms():
     return int(env_else('OCF_RESKEY_CRM_meta_master_max', 0)) > 0
 
 
-def qx(cmd):
+def run_pgctrldata():
     try:
-        return check_output(cmd, shell=True)
+        return check_output([get_pgctrldata(), get_datadir()])
     except CalledProcessError as e:
         return e.output
 
 
 @memoize
 def get_ocf_nodename():
-    p = re.compile(r"Pacemaker ([\d.]+)")
-    # use crm_node -n for pacemaker > 1.1.8
-    if call(r"which pacemakerd > /dev/null 2>&1", shell=True) == 0:
-        ret = qx(r"pacemakerd -\$")
-        ret = p.findall(ret)[0]
-        if StrictVersion(ret) > StrictVersion('1.1.8'):
-            return check_output([get_crm_node(), "-n"]).strip()
-    # otherwise use uname -n
-    return qx("uname -n").strip()
+    try:
+        return check_output([get_crm_node(), "-n"]).strip()
+    except CalledProcessError:
+        sys.exit(OCF_ERR_GENERIC)
 
 
 def pg_validate_all():
@@ -408,11 +407,10 @@ def pg_validate_all():
         log_err("PostgreSQL {} is too old: >= 9.3 required", ver)
         sys.exit(OCF_ERR_INSTALLED)
     # require wal_level >= hot_standby
-    status = qx(get_pgctrldata() + " " + datadir + " 2>/dev/null")
     # NOTE: pg_controldata output changed with PostgreSQL 9.5, so we need to
     # account for both syntaxes
     p = re.compile(r"^(?:Current )?wal_level setting:\s+(.*?)\s*$", re.M)
-    finds = p.findall(status)
+    finds = p.findall(run_pgctrldata())
     if not finds:
         log_crit('Could not read wal_level setting')
         sys.exit(OCF_ERR_ARGS)
@@ -637,8 +635,7 @@ def _confirm_role():
 # WARNING: the status is NOT updated in case of crash.
 def get_pg_cluster_state():
     datadir = get_datadir()
-    status = qx(get_pgctrldata() + " " + datadir + " 2>/dev/null")
-    finds = RE_PG_CLUSTER_STATE.findall(status)
+    finds = RE_PG_CLUSTER_STATE.findall(run_pgctrldata())
     if not finds:
         log_crit('get_pg_cluster_state: could not read state from controldata '
                  'file for "{}"', datadir)
@@ -906,7 +903,7 @@ def set_master_score(score, node=None):
     cmd = [get_crm_master(), "-q", "-v", score]
     if node:
         cmd.extend(["-N", node])
-    call(cmd)
+    call(" ".join(cmd), shell=True)
     while True:
         tmp = get_master_score(node)
         if tmp == score:
@@ -1000,7 +997,7 @@ def get_ha_private_attr(name, node=None):
         cmd.extend(["-N", node])
     try:
         ans = check_output(cmd)
-    except CalledProcessError as e:
+    except CalledProcessError:
         return ""
     p = re.compile(r'^name=".*" host=".*" value="(.*)"$')
     m = p.findall(ans)
@@ -1231,7 +1228,7 @@ def pg_notify():
         return pgsql_notify_post_promote()
     if type_op == "pre-demote":
         return pgsql_notify_pre_demote()
-    if type_op == "pre-stop$":
+    if type_op == "pre-stop":
         return pgsql_notify_pre_stop()
     return OCF_SUCCESS
 
@@ -1240,17 +1237,15 @@ def pg_notify():
 def _is_master_recover(n):
     d = get_notify_dict()
     # n == d['promote'][0]['uname']
-    t1 = any(m['uname'] == n for m in d['master'])
-    t2 = any(m['uname'] == n for m in d['promote'])
-    return t1 and t2
+    return (any(m['uname'] == n for m in d['master']) and
+            any(m['uname'] == n for m in d['promote']))
 
 
 # Check if the current transition is a recover of a slave clone on given node.
 def _is_slave_recover(n):
     d = get_notify_dict()
-    t1 = any(m['uname'] == n for m in d['slave'])
-    t2 = any(m['uname'] == n for m in d['start'])
-    return t1 and t2
+    return (any(m['uname'] == n for m in d['slave']) and
+            any(m['uname'] == n for m in d['start']))
 
 
 # check if th current transition is a switchover to the given node.
@@ -1288,7 +1283,7 @@ def _check_switchover():
     # master to check in the WAL between these adresses if we have a
     # "checkpoint shutdown" using pg_xlogdump.
     datadir = get_datadir()
-    ans = qx(get_pgctrldata() + " " + datadir + " 2>/dev/null")
+    ans = run_pgctrldata()
     # Get the latest known TL
     p = re.compile(r"^Latest checkpoint's TimeLineID:\s+(\d+)\s*$", re.M)
     m = p.findall(ans)
@@ -1518,18 +1513,18 @@ def ocf_meta_data():
         System user account used to run the PostgreSQL server
       </longdesc>
       <shortdesc lang="en">PostgreSQL system User</shortdesc>
-      <content type="string" default="$system_user_default" />
+      <content type="string" default="{system_user_default}" />
     </parameter>
     <parameter name="bindir" unique="0" required="0">
       <longdesc lang="en">Directory with PostgreSQL binaries. The agent uses 
       psql, pg_isready, pg_controldata and pg_ctl.</longdesc>
       <shortdesc lang="en">Path to the PostgreSQL binaries</shortdesc>
-      <content type="string" default="$bindir_default" />
+      <content type="string" default="{bindir_default}" />
     </parameter>
     <parameter name="pgdata" unique="1" required="0">
       <longdesc lang="en">Path to the data directory, e.g. PGDATA</longdesc>
       <shortdesc lang="en">Path to the data directory</shortdesc>
-      <content type="string" default="$pgdata_default" />
+      <content type="string" default="{pgdata_default}" />
     </parameter>
     <parameter name="datadir" unique="1" required="0">
       <longdesc lang="en">
@@ -1544,18 +1539,18 @@ def ocf_meta_data():
         Host IP address or unix socket folder the instance is listening on.
       </longdesc>
       <shortdesc lang="en">Instance IP or unix socket folder</shortdesc>
-      <content type="string" default="$pghost_default" />
+      <content type="string" default="{pghost_default}" />
     </parameter>
     <parameter name="pgport" unique="0" required="0">
       <longdesc lang="en">
         Port the instance is listening on.
       </longdesc>
       <shortdesc lang="en">Instance port</shortdesc>
-      <content type="integer" default="$pgport_default" />
+      <content type="integer" default="{pgport_default}" />
     </parameter>
     <parameter name="recovery_template" unique="1" required="0">
       <longdesc lang="en">
-        Path of the recovery.conf template. This file is copied to \$PGDATA
+        Path of the recovery.conf template. This file is copied to PGDATA
         before starting the instance as slave</longdesc>
       <shortdesc lang="en">Path to the recovery.conf template.</shortdesc>
       <content type="string" default="PGDATA/recovery.conf.pcmk" />
@@ -1568,7 +1563,7 @@ def ocf_meta_data():
         "-c config_file=/etc/postgresql/9.3/main/postgresql.conf".
       </longdesc>
       <shortdesc lang="en">Additionnal arguments for postgres start.</shortdesc>
-      <content type="string" default="$start_opts_default" />
+      <content type="string" default="{start_opts_default}" />
     </parameter>
   </parameters>
   <actions>
@@ -1586,7 +1581,14 @@ def ocf_meta_data():
     <action name="validate-all" timeout="5" />
     <action name="methods" timeout="5" />
   </actions>
-</resource-agent>""")
+</resource-agent>""".format(
+        system_user_default=system_user_default,
+        pghost_default=pghost_default,
+        start_opts_default=start_opts_default,
+        pgport_default=pgport_default,
+        bindir_default=bindir_default,
+        pgdata_default=pgdata_default
+    ))
 
 
 def ocf_methods():
@@ -1613,9 +1615,9 @@ if __name__ == "__main__":
     ocf_action = sys.argv[1]
     if 'OCF_RESKEY_CRM_meta_interval' not in os.environ:
         os.environ['OCF_RESKEY_CRM_meta_interval'] = "0"
-    if env_else('$OCF_RESKEY_OCF_CHECK_LEVEL', '') != '':
+    if env_else('OCF_RESKEY_OCF_CHECK_LEVEL', '') != '':
         os.environ["OCF_CHECK_LEVEL"] = os.environ[
-            "$OCF_RESKEY_OCF_CHECK_LEVEL"]
+            "OCF_RESKEY_OCF_CHECK_LEVEL"]
     else:
         os.environ["OCF_CHECK_LEVEL"] = "0"
     os.chdir(gettempdir())
