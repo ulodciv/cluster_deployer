@@ -1,9 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
+from pathlib import Path, PurePosixPath
 from ipaddress import ip_interface, IPv4Interface, IPv4Address
 
 from paramiko import RSAKey
-from pathlib import Path, PurePosixPath
 
 from postgres import Postgres
 from vm import Vbox
@@ -69,6 +69,12 @@ class Cluster:
             [partial(v.add_fingerprints, self.vms) for v in self.vms])
 
     def deploy_part_3(self):
+        local_ra_file = "src/ra/pgsqlms2.py"
+        for vm in self.vms:
+            vm.sftp_put(
+                local_ra_file,
+                "/usr/lib/ocf/resource.d/heartbeat/pgsqlms2")
+            vm.ssh_run_check("chmod +x " + "/usr/lib/ocf/resource.d/heartbeat/pgsqlms2")
         master = self.master
         master.pg_start()
         master.deploy_demo_db(self.demo_db)
@@ -148,7 +154,7 @@ class Cluster:
     def ha_add_pg_to_xml(self):
         self.master.ssh_run_check(
             f"pcs -f {self.ha_cluster_xml_file} "
-            f"resource create pgsqld ocf:heartbeat:pgsqlms "
+            f"resource create pgsqld ocf:heartbeat:pgsqlms2 "
             f"bindir=/usr/pgsql-9.6/bin pgdata=/var/lib/pgsql/9.6/data "
             f"op start timeout=60s "
             f"op stop timeout=60s "

@@ -157,7 +157,7 @@ def get_ha_debuglog():
 def get_ocf_recource_instance():
     ret = env_else('OCF_RESOURCE_INSTANCE', '')
     if ret == '':
-        ha_log("ERROR: Need to tell us our resource instance name.")
+        log_err("Need to tell us our resource instance name.")
         sys.exit(OCF_ERR_ARGS)
     return ret
 
@@ -190,94 +190,49 @@ def as_postgres_user():
     os.seteuid(u.pw_uid)
 
 
-def ha_log(*args):
+def ocf_log(level, msg, *args):
+    l = level + ": " + msg.format(*args)
     ignore_stderr = False
-    loglevel = ''
     logtag = env_else('HA_LOGTAG', '')
-    if args[0] == '--ignore-stderr':
-        ignore_stderr = True
-        args = args[1:]
     if env_else('HA_LOGFACILITY', 'none') == 'none':
         os.environ['HA_LOGFACILITY'] = ''
     ha_logfacility = env_else('HA_LOGFACILITY', '')
     # if we're connected to a tty, then output to stderr
     if sys.stderr.isatty():
-        # FIXME
-        # T.N.: this was ported with the bug on $loglevel being empty
-        # and never set before the test here...
-        if int(env_else('HA_debug', -1)) == 0 and loglevel == "debug":
-            return 0
-        elif ignore_stderr:
-            # something already printed this error to stderr, so ignore
-            return 0
         if logtag != '':
-            sys.stderr.write("{}: {}\n".format(logtag, " ".join(args)))
+            sys.stderr.write("{}: {}\n".format(logtag, l))
         else:
-            sys.stderr.write("{}\n".format(" ".join(args)))
+            sys.stderr.write(l + "\n")
         return 0
     set_logtag()
     if env_else('HA_LOGD', 'no') == 'yes':
-        if call(chain(['ha_logger', '-t', logtag], args)) == 0:
+        if call(chain(['ha_logger', '-t', logtag, l])) == 0:
             return 0
     if ha_logfacility != '':
         # logging through syslog
         # loglevel is unknown, use 'notice' for now
-        loglevel = 'notice'
-        if any("ERROR" in a for a in args):
+        if level in ("ERROR", "CRIT"):
             loglevel = "err"
-        elif any("WARN" in a for a in args):
+        elif level == "WARNING":
             loglevel = "warning"
-        elif any("INFO" in a or "info" in a for a in args):
+        elif level == "INFO":
             loglevel = "info"
-        call(chain(
-            ['logger', '-t', logtag, '-p', ha_logfacility + "." + loglevel],
-            args))
+        elif level == "DEBUG":
+            loglevel = "debug"
+        else:
+            loglevel = "notice"
+        call(['logger', '-t', logtag, '-p', ha_logfacility + "." + loglevel, l])
     ha_logfile = env_else('HA_LOGFILE', '')
     if ha_logfile != '':
         with open(ha_logfile, "a") as f:
-            f.write("{}:	{} {}\n".format(logtag, hadate(), ' '.join(args)))
+            f.write("{}:	{} {}\n".format(logtag, hadate(), l))
     # appending to stderr
     if not ha_logfile and not ignore_stderr and not ha_logfacility:
-        sys.stderr.write("{} {}\n".format(hadate(), ' '.join(args)))
+        sys.stderr.write("{} {}\n".format(hadate(), l))
     ha_debuglog = get_ha_debuglog()
     if ha_debuglog and ha_debuglog != ha_logfile:
         with open(ha_debuglog, "a") as f:
-            f.write("{}:	{} {}\n".format(logtag, hadate(), ' '.join(args)))
-
-
-def ha_debug(*args):
-    if int(env_else('HA_debug', -1)) == 0:
-        return 0
-    logtag = env_else('HA_LOGTAG', '')
-    if sys.stderr.isatty():
-        if logtag != '':
-            sys.stderr.write("{}: {}\n".format(logtag, ' '.join(args)))
-        else:
-            sys.stderr.write("{}\n".format(' '.join(args)))
-        return 0
-    set_logtag()
-    if env_else('HA_LOGD', 'no') == 'yes':
-        if call(chain(
-                ['ha_logger', '-t', logtag, '-D', 'ha-debug'], args)) == 0:
-            return 0
-    if env_else('HA_LOGFACILITY', 'none') == 'none':
-        os.environ['HA_LOGFACILITY'] = ''
-    ha_logfacility = env_else('HA_LOGFACILITY', '')
-    if ha_logfacility != '':
-        # logging through syslog
-        call(chain(
-            ['logger', '-t', logtag, '-p', ha_logfacility + ".debug"], args))
-    ha_debuglog = get_ha_debuglog()
-    if ha_debuglog and os.path.isfile(ha_debuglog):
-        with open(ha_debuglog, "a") as f:
-            f.write("{}:	{} {}\n".format(logtag, hadate(), ' '.join(args)))
-    # appending to stderr
-    if not ha_logfacility and not ha_debuglog and not ha_logfacility:
-        sys.stderr.write("{}: {} {}\n".format(logtag, hadate(), ' '.join(args)))
-
-
-def ocf_log(level, msg, *args):
-    ha_log(level + ": " + msg.format(*args))
+            f.write("{}:	{} {}\n".format(logtag, hadate(), l))
 
 
 log_crit = partial(ocf_log, "CRIT")
@@ -306,6 +261,11 @@ def get_notify_dict():
     actions = ['active', 'inactive', 'start', 'stop']
     if ocf_is_ms():  # exit if the resource is not a mutistate one
         actions.extend(['master', 'slave', 'promote', 'demote'])
+        notify_env.update({
+            'master': [],
+            'slave': [],
+            'promote': [],
+            'demote': []})
     for action in actions:
         rsc_key = "OCF_RESKEY_CRM_meta_notify_{}_resource".format(action)
         uname_key = "OCF_RESKEY_CRM_meta_notify_{}_uname".format(action)
@@ -1095,7 +1055,7 @@ def pg_promote():
         # convert location to decimal
         max_lsn = max_lsn.strip("\n")
         wal_num, wal_off = max_lsn.split('/')
-        max_lsn_dec = (294967296 * hex(wal_num)) + hex(wal_off)
+        max_lsn_dec = (294967296 * int(wal_num, 16)) + int(wal_off, 16)
         log_debug('pg_promote: current node lsn location: {}({})',
                   max_lsn, max_lsn_dec)
         # Now we compare with the other available nodes.
@@ -1114,7 +1074,7 @@ def pg_promote():
             # convert location to decimal
             node_lsn = node_lsn.strip('\n')
             wal_num, wal_off = node_lsn.split('/')
-            node_lsn_dec = (4294967296 * hex(wal_num)) + hex(wal_off)
+            node_lsn_dec = (4294967296 * int(wal_num, 16)) + int(wal_off, 16)
             log_debug('pg_promote: comparing with {}: lsn is {}({})',
                       node, node_lsn, node_lsn_dec)
             # If the node has a bigger delta, select it as a best candidate to
@@ -1251,7 +1211,9 @@ def _is_slave_recover(n):
 # check if th current transition is a switchover to the given node.
 def _is_switchover(n):
     d = get_notify_dict()
-    old = d['master'][0]['uname']
+    old = None
+    if "master" in d and len(d['master']) > 0 and 'uname' in d['master'][0]:
+        old = d['master'][0]['uname']
     if len(d['master']) != 1 or len(d['demote']) != 1 or len(d['promote']) != 1:
         return 0
     t1 = any(m['uname'] == old for m in d['demote'])
