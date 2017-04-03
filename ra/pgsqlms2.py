@@ -1,16 +1,15 @@
 #!/usr/bin/python
-import functools
 import os
 import pprint
 import datetime
 import pwd
 import re
-import subprocess
 import sys
 import tempfile
+from subprocess import call, check_output, CalledProcessError, STDOUT
 from collections import defaultdict
 from distutils.version import StrictVersion
-from functools import partial
+from functools import partial, wraps
 from itertools import izip_longest, chain
 from tempfile import gettempdir
 from time import sleep
@@ -49,7 +48,7 @@ start_opts_default = ""
 def memoize(f):
     cache = {}
 
-    @functools.wraps(f)
+    @wraps(f)
     def memoizer(*args, **kwargs):
         if args not in cache:
             cache[args] = f(*args, **kwargs)
@@ -179,7 +178,7 @@ def get_crm_failcount():
     return os.path.join(get_ha_bin(), "crm_failcount")
 
 
-def demote_as_postgres_user():
+def as_postgres_user():
     u = pwd.getpwnam(get_system_user())
     os.initgroups(get_system_user(), u.pw_gid)
     os.setgid(u.pw_gid)
@@ -214,7 +213,7 @@ def ha_log(*args):
         return 0
     set_logtag()
     if env_else('HA_LOGD', 'no') == 'yes':
-        if subprocess.call(chain(['ha_logger', '-t', logtag], args)) == 0:
+        if call(chain(['ha_logger', '-t', logtag], args)) == 0:
             return 0
     if ha_logfacility != '':
         # logging through syslog
@@ -226,7 +225,7 @@ def ha_log(*args):
             loglevel = "warning"
         elif any("INFO" in a or "info" in a for a in args):
             loglevel = "info"
-        subprocess.call(chain(
+        call(chain(
             ['logger', '-t', logtag, '-p', ha_logfacility + "." + loglevel],
             args))
     ha_logfile = env_else('HA_LOGFILE', '')
@@ -254,7 +253,7 @@ def ha_debug(*args):
         return 0
     set_logtag()
     if env_else('HA_LOGD', 'no') == 'yes':
-        if subprocess.call(chain(
+        if call(chain(
                 ['ha_logger', '-t', logtag, '-D', 'ha-debug'], args)) == 0:
             return 0
     if env_else('HA_LOGFACILITY', 'none') == 'none':
@@ -262,7 +261,7 @@ def ha_debug(*args):
     ha_logfacility = env_else('HA_LOGFACILITY', '')
     if ha_logfacility != '':
         # logging through syslog
-        subprocess.call(chain(
+        call(chain(
             ['logger', '-t', logtag, '-p', ha_logfacility + ".debug"], args))
     ha_debuglog = get_ha_debuglog()
     if ha_debuglog and os.path.isfile(ha_debuglog):
@@ -328,33 +327,22 @@ def ocf_is_ms():
     return int(env_else('OCF_RESKEY_CRM_meta_master_max', 0)) > 0
 
 
-def qx2(cmd):
-    try:
-        return 0, subprocess.check_output(cmd, shell=True)
-    except subprocess.CalledProcessError as e:
-        return e.returncode, e.output
-
-
 def qx(cmd):
     try:
-        return subprocess.check_output(cmd, shell=True)
-    except subprocess.CalledProcessError as e:
+        return check_output(cmd, shell=True)
+    except CalledProcessError as e:
         return e.output
-
-
-def qx_check_only(cmd):
-    return subprocess.call(cmd, shell=True) == 0
 
 
 @memoize
 def get_ocf_nodename():
     p = re.compile(r"Pacemaker ([\d.]+)")
     # use crm_node -n for pacemaker > 1.1.8
-    if qx_check_only(r"which pacemakerd > /dev/null 2>&1"):
+    if call(r"which pacemakerd > /dev/null 2>&1", shell=True) == 0:
         ret = qx(r"pacemakerd -\$")
         ret = p.findall(ret)[0]
         if StrictVersion(ret) > StrictVersion('1.1.8'):
-            return subprocess.check_output([get_crm_node(), "-n"]).strip()
+            return check_output([get_crm_node(), "-n"]).strip()
     # otherwise use uname -n
     return qx("uname -n").strip()
 
@@ -456,8 +444,8 @@ def as_postgres(cmd):
     cmd = [str(c) for c in cmd]
     log_debug('as_postgres: "{}" as {}', " ".join(cmd), get_system_user())
     with open(os.devnull, 'w') as DEVNULL:
-        return subprocess.call(cmd, preexec_fn=demote_as_postgres_user,
-                               stdout=DEVNULL, stderr=subprocess.STDOUT)
+        return call(
+            cmd, preexec_fn=as_postgres_user, stdout=DEVNULL, stderr=STDOUT)
 
 
 # Run a query using psql.
@@ -473,12 +461,11 @@ def pg_execute(query):
     os.close(tmp_fh)
     os.chmod(tmp_filename, 0o644)
     try:
-        ans = subprocess.check_output(
-            [get_psql(), '--set', 'ON_ERROR_STOP=1', '-qXAtf', tmp_filename,
-             '-R', RS, '-F', FS, '--port', get_pgport(), '--host', get_pghost(),
-             connstr],
-            preexec_fn=demote_as_postgres_user)
-    except subprocess.CalledProcessError as e:
+        ans = check_output(
+            [get_psql(), '-v', 'ON_ERROR_STOP=1', '-qXAtf', tmp_filename, '-R',
+             RS, '-F', FS, '-p', get_pgport(), '-h', get_pghost(), connstr],
+            preexec_fn=as_postgres_user)
+    except CalledProcessError as e:
         log_debug('pg_execute: psql error, return code: {}', e.returncode)
         # Possible return codes:
         #  -1: wrong parameters
@@ -500,8 +487,8 @@ def pg_execute(query):
 def get_ha_nodes():
     cmd = [get_crm_node(), "-p"]
     try:
-        return subprocess.check_output(cmd).split()
-    except subprocess.CalledProcessError as e:
+        return check_output(cmd).split()
+    except CalledProcessError as e:
         log_err(
             'get_ha_nodes: {} failed with return code {}', cmd, e.returncode)
         sys.exit(OCF_ERR_GENERIC)
@@ -570,7 +557,7 @@ def _check_locations():
         if row[0] == nodename:
             log_warn('_check_locations: streaming replication with myself!')
             continue
-        node_score = _get_master_score(row[0])
+        node_score = get_master_score(row[0])
         if row[3].strip() in ("startup", "backup"):
             # We exclude any standby being in state backup (pg_basebackup) or
             # startup (new standby or failing standby)
@@ -603,7 +590,7 @@ def _check_locations():
                  'set score to -1000', node)
         set_master_score('-1000', node)
     # Finally set the master score if not already done
-    node_score = _get_master_score()
+    node_score = get_master_score()
     if node_score != "1001":
         set_master_score('1001')
     return OCF_SUCCESS
@@ -876,19 +863,26 @@ def _create_recovery_conf():
 
 # Start the local instance using pg_ctl
 def pg_ctl_start():
-    # Use insanely long timeout to ensure Pacemaker gives up before us
+    # insanely long timeout to ensure Pacemaker gives up first
     cmd = [get_pgctl(), 'start', '-D', get_pgdata(), '-w', '-t', 1000000]
     if get_start_opts():
         cmd.extend(['-o', get_start_opts()])
     return as_postgres(cmd)
 
 
+def pg_ctl_stop():
+    return as_postgres([get_pgctl(), 'stop', '-D', get_pgdata(),
+                        '-w', '-t', 1000000, '-m', 'fast'])
+
+
 # Get the resource master score of a node
-def _get_master_score(node=None):
-    node_arg = '--node "{}"'.format(node) if node else ""
-    rc, score = qx2(
-        get_crm_master() + " --quiet --get-value " + node_arg + " 2> /dev/null")
-    if rc != 0:
+def get_master_score(node=None):
+    cmd = [get_crm_master(), "--quiet", "--get-value"]
+    if node:
+        cmd.extend(["-N", node])
+    try:
+        score = check_output(" ".join(cmd), shell=True)
+    except CalledProcessError:
         return ''
     return score.strip()
 
@@ -899,7 +893,7 @@ def _get_master_score(node=None):
 def _master_score_exists():
     partition_nodes = get_ha_nodes()
     for node in partition_nodes:
-        score = _get_master_score(node)
+        score = get_master_score(node)
         if score != "" and int(score) > -1:
             return True
     return False
@@ -909,10 +903,12 @@ def _master_score_exists():
 # As setting an attribute is asynchronous, this will return as soon as the
 # attribute is really set by attrd and available everywhere.
 def set_master_score(score, node=None):
-    node_arg = '--node "{}"'.format(node) if node else ""
-    qx(get_crm_master() + " " + node_arg + " --quiet --update " + score)
+    cmd = [get_crm_master(), "-q", "-v", score]
+    if node:
+        cmd.extend(["-N", node])
+    call(cmd)
     while True:
-        tmp = _get_master_score(node)
+        tmp = get_master_score(node)
         if tmp == score:
             break
         log_debug('set_master_score: waiting to set score to {} '
@@ -951,15 +947,14 @@ def pg_start():
         if rc == OCF_SUCCESS:
             log_info('pg_start: {} started', inst)
             # Check if a master score exists in the cluster.
-            # During the very first start of the cluster, no master score will
-            # exists on any of the existing slaves, unless an admin designated
-            # one of them using crm_master. If no master exists the cluster will
-            # not promote a master among the slaves.
-            # To solve this situation, we check if there is at least one master
-            # score existing on one node in the cluster. Do nothing if at least
-            # one master score is found among the clones of the resource. If no
-            # master score exists, set a score of 1 only if the resource was a
-            # shut downed master before the start.
+            # During the first cluster start, no master score will exist on any
+            # of the slaves, unless an admin designated one using crm_master.
+            # If no master exists the cluster won't promote one from the slaves.
+            # To solve this, we check if there is at least one master
+            # score existing on one node. Do nothing if at least one master
+            # score is found in the clones of the resource. If no master score
+            # exists, set a score of 1 only if the resource was a
+            # master shut down before the start.
             if prev_state == "shut down" and not _master_score_exists():
                 log_info('pg_start: no master score around; set mine to 1')
                 set_master_score('1')
@@ -983,21 +978,11 @@ def pg_stop():
     elif rc not in (OCF_SUCCESS, OCF_RUNNING_MASTER):
         log_warn('pg_stop: unexpected state for {} (returned {})', inst, rc)
         return OCF_ERR_GENERIC
-    #
     # From here, the instance is running for sure.
-    #
     log_debug('pg_stop: {} is running, stopping it', inst)
     # Try to quit with proper shutdown.
-    # Use insanely long timeout to ensure Pacemaker gives up before us
-    rc = as_postgres([get_pgctl(), 'stop', '-D', get_pgdata(), '-w',
-                      '-t', 1000000, '-m', 'fast'])
-    if rc == 0:
-        # Wait for the stop to finish.
-        while True:
-            rc = pg_monitor()
-            if rc != OCF_NOT_RUNNING:
-                break
-            sleep(1)
+    # insanely long timeout to ensure Pacemaker gives up first
+    if pg_ctl_stop() == 0:
         log_info('pg_stop: {} stopped', inst)
         return OCF_SUCCESS
     log_err('pg_stop: {} failed to stop', inst)
@@ -1014,8 +999,8 @@ def get_ha_private_attr(name, node=None):
     if node:
         cmd.extend(["-N", node])
     try:
-        ans = subprocess.check_output(cmd)
-    except subprocess.CalledProcessError as e:
+        ans = check_output(cmd)
+    except CalledProcessError as e:
         return ""
     p = re.compile(r'^name=".*" host=".*" value="(.*)"$')
     m = p.findall(ans)
@@ -1027,7 +1012,7 @@ def get_ha_private_attr(name, node=None):
 # Set the given private attribute name to the given value
 # Setting attributes is asynchronous, so wait until attribute is really set
 def set_ha_private_attr(name, val):
-    subprocess.call([get_attrd_updater(), "-U", val, "-n", name, "-p"])
+    call([get_attrd_updater(), "-U", val, "-n", name, "-p"])
     checks = 0
     while get_ha_private_attr(name) != val:
         if checks % 10 == 0:
@@ -1039,7 +1024,7 @@ def set_ha_private_attr(name, val):
 # Delete the given private attribute.
 # Setting attributes is asynchronous, so wait until attribute is really deleted
 def del_ha_private_attr(name):
-    subprocess.call([get_attrd_updater(), "-D", "-n", name, "-p"])
+    call([get_attrd_updater(), "-D", "-n", name, "-p"])
     checks = 0
     while get_ha_private_attr(name) != '':
         if checks % 10 == 0:
@@ -1073,27 +1058,26 @@ def pg_promote():
     #
     # At this point, the instance **MUST** be started as a secondary.
     #
-    # Cancel the switchover if it has been considered not safe during the
-    # pre-promote action
+    # Cancel the switchover if it has been considered unsafe during pre-promote
     if get_ha_private_attr('cancel_switchover') == '1':
         log_err('pg_promote: switch from pre-promote action canceled ')
         del_ha_private_attr('cancel_switchover')
         return OCF_ERR_GENERIC
     # Do not check for a better candidate if we try to recover the master
-    # Recover of a master is detected during the pre-promote action. It sets the
-    # private attribute 'recover_master' to '1' if this is a master recover.
+    # Recovery of a master is detected during pre-promote. It sets the
+    # private attribute 'recover_master' to '1' if this is a master recovery.
     if get_ha_private_attr('recover_master') == '1':
         log_info('pg_promote: recovering old master, no election needed')
     else:
         # The promotion is occurring on the best known candidate (highest
         # master score), as chosen by pacemaker during the last working monitor
         # on previous master (see pg_monitor/_check_locations subs).
-        # To avoid any race condition between the last monitor action on the
-        # previous master and the **real** most up-to-date standby, we
-        # set each standby location during the "pre-promote" action, and stored
-        # them using the "lsn_location" resource attribute.
+        # To avoid race conditions between the last monitor action on the
+        # previous master and the *real* most up-to-date standby, we set each
+        # standby location during pre-promote, and store them using the
+        # "lsn_location" resource attribute.
         #
-        # The best standby to promote would have the highest known LSN. If the
+        # The best standby to promote has the highest LSN. If the
         # current resource is not the best one, we need to modify the master
         # scores accordingly, and abort the current promotion.
         log_debug('pg_promote: checking if current node is the best '
@@ -1102,13 +1086,13 @@ def pg_promote():
         # partition) using the "crm_node" command
         active_nodes = get_ha_private_attr('nodes').split()
         node_to_promote = ''
-        # Get the "lsn_location" attribute value for the current node, as set
+        # Get the lsn_location attribute value of the current node, as set
         # during the "pre-promote" action.
         # It should be the greatest among the secondary instances.
         max_lsn = get_ha_private_attr('lsn_location')
         if max_lsn == '':
-            # This should not happen as the "lsn_location" attribute should have
-            # been updated during the "pre-promote" action.
+            # Should not happen since the "lsn_location" attribute should have
+            # been updated during pre-promote.
             log_crit('pg_promote: can not get current node LSN location')
             return OCF_ERR_GENERIC
         # convert location to decimal
@@ -1161,7 +1145,7 @@ def pg_promote():
         # Promote the instance on the current node.
         log_err('pg_promote: error during promotion')
         return OCF_ERR_GENERIC
-    # promotion is asynchronous: wait until it is finished
+    # promotion is asynchronous: wait for it to finish
     while pg_monitor() != OCF_RUNNING_MASTER:
         log_debug('pg_promote: waiting for the promote to complete')
         sleep(1)
@@ -1204,15 +1188,8 @@ def pg_demote():
     # See discussion "CRM trying to demote a stopped resource" on
     # developers@clusterlabs.org
     if rc != OCF_NOT_RUNNING:
-        # WARNING the instance **MUST** be stopped gracefully.
-        # Do **not** use pg_stop() or service or systemctl here as these
-        # commands might force-stop the PostgreSQL instance using immediate
-        # after some timeout and return success, which is misleading.
-        # Use insanely long timeout to ensure Pacemaker gives up before us
-        rc = as_postgres([get_pgctl(), 'stop', '-D', get_pgdata(), '-m', 'fast',
-                          '-w', '-t', 1000000])
-        # No need to wait for stop to complete, this is handled in pg_ctl
-        # using -w option.
+        # insanely long timeout to ensure Pacemaker gives up firt
+        rc = pg_ctl_stop()
         if rc != 0:
             log_err('pg_demote: failed to stop {} (pg_ctl returned {})',
                     inst, rc)
@@ -1333,15 +1310,20 @@ def _check_switchover():
         log_crit('_check_switchover: could not read last '
                  'checkpoint and timeline from controldata file!')
         log_debug('_check_switchover: XLOGDUMP parameters: '
-                  'datadir: "{}", last_chk: "{}", tl: "{}", mast_lsn: "{}"',
+                  'datadir: "{}", last_chk: {}, tl: {}, mast_lsn: {}',
                   datadir, last_chk, tl, last_lsn)
         return 2
-    # force a checkpoint on the slave to flush the master's
-    # shutdown checkpoint in the WAL
-    rc, ans = qx2(get_pgxlogdump() + " --path " + datadir + " --timeline " + tl +
-                  " --start " + last_chk + " --end " + last_lsn + " 2>&1")
+    # force checkpoint on the slave to flush the master's
+    # shutdown checkpoint to WAL
+    rc = 0
+    try:
+        ans = check_output([get_pgxlogdump(), "-p", datadir, "-t", tl,
+                            "-s", last_chk, "-e", last_lsn], stderr=STDOUT)
+    except CalledProcessError as e:
+        rc = e.returncode
+        ans = e.output
     log_debug(
-        '_check_switchover: XLOGDUMP rc: "{}", tl: "{}", last_chk: {}, '
+        '_check_switchover: XLOGDUMP rc: {}, tl: {}, last_chk: {}, '
         'last_lsn: {}, output: "{}"', rc, tl, last_chk, last_lsn, ans)
     p = re.compile(
         r"^rmgr: XLOG.*desc: [cC][hH][eE][cC][kK][pP][oO][iI][nN][tT]"
@@ -1358,10 +1340,10 @@ def _check_switchover():
     return 1
 
 
-# This action is called **before** the actual promotion when a failing master is
+# Called *before* the actual promotion when a failing master is
 # considered unreclaimable, recoverable or a new master must be promoted
 # (switchover or first start).
-# As every "notify" action, it is executed almost simultaneously on all
+# Like all "notify" actions, it is executed almost simultaneously on all
 # available nodes.
 def pgsql_notify_pre_promote():
     node = get_ocf_nodename()
@@ -1384,13 +1366,13 @@ def pgsql_notify_pre_promote():
     if _is_switchover(node) and any(m['uname'] == node for m in d['promote']):
         rc = _check_switchover()
         if rc == 1:
-            # Shortcut the election process as the switchover will be
+            # Shortcut the election process because the switchover will be
             # canceled
             return OCF_SUCCESS
         elif rc != 0:
             # This is an extreme mesure, it shouldn't happen.
-            qx(get_crm_failcount() + " --resource " + get_ocf_recource_instance() +
-               " -v 1000000")
+            call([get_crm_failcount(), "-r",
+                  get_ocf_recource_instance(), "-v", "1000000"])
             return OCF_ERR_INSTALLED
         # If the sub keeps going, that means the switchover is safe.
         # Keep going with the election process in case the switchover was
@@ -1439,7 +1421,6 @@ def pgsql_notify_pre_promote():
 # This action is called after a promote action.
 def pgsql_notify_post_promote():
     # We have a new master (or the previous one recovered).
-    # Environment cleanup!
     del_ha_private_attr('lsn_location')
     del_ha_private_attr('recover_master')
     del_ha_private_attr('nodes')
@@ -1450,11 +1431,12 @@ def pgsql_notify_post_promote():
 # This is called before a demote occurs.
 def pgsql_notify_pre_demote():
     # do nothing if the local node will not be demoted
-    if not any(m['uname'] == get_ocf_nodename() for m in get_notify_dict()["demote"]):
+    ocf_nodename = get_ocf_nodename()
+    if all(m['uname'] != ocf_nodename for m in get_notify_dict()["demote"]):
         return OCF_SUCCESS
     rc = pg_monitor()
     # do nothing if this is not a master recovery
-    if not (_is_master_recover(get_ocf_nodename()) and rc == OCF_FAILED_MASTER):
+    if not _is_master_recover(ocf_nodename) or rc != OCF_FAILED_MASTER:
         return OCF_SUCCESS
     # in case of master crash, we need to detect if the CRM tries to recover
     # the master clone. The usual transition is to do:
@@ -1526,9 +1508,8 @@ def ocf_meta_data():
 <!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
 <resource-agent name="pgsqlsr">
   <version>1.0</version>
-
-  <longdesc lang="en">
-    Resource script for PostgreSQL in replication. It manages PostgreSQL servers using streaming replication as an HA resource.
+  <longdesc lang="en">Resource Agent script for PostgreSQL in replication. 
+  It manages PostgreSQL servers using streaming replication as an HA resource.
   </longdesc>
   <shortdesc lang="en">Manages PostgreSQL servers in replication</shortdesc>
   <parameters>
@@ -1539,33 +1520,25 @@ def ocf_meta_data():
       <shortdesc lang="en">PostgreSQL system User</shortdesc>
       <content type="string" default="$system_user_default" />
     </parameter>
-
     <parameter name="bindir" unique="0" required="0">
-      <longdesc lang="en">
-        Path to the directory storing the PostgreSQL binaries. The agent uses psql, pg_isready, pg_controldata and pg_ctl.
-      </longdesc>
+      <longdesc lang="en">Directory with PostgreSQL binaries. The agent uses 
+      psql, pg_isready, pg_controldata and pg_ctl.</longdesc>
       <shortdesc lang="en">Path to the PostgreSQL binaries</shortdesc>
       <content type="string" default="$bindir_default" />
     </parameter>
-
     <parameter name="pgdata" unique="1" required="0">
-      <longdesc lang="en">
-        Path to the data directory, e.g. PGDATA
-      </longdesc>
+      <longdesc lang="en">Path to the data directory, e.g. PGDATA</longdesc>
       <shortdesc lang="en">Path to the data directory</shortdesc>
       <content type="string" default="$pgdata_default" />
     </parameter>
-
     <parameter name="datadir" unique="1" required="0">
       <longdesc lang="en">
-        Path to the directory set in data_directory from your postgresql.conf file. This parameter
-        has the same default than PostgreSQL itself: the pgdata parameter value. Unless you have a
-        special PostgreSQL setup and you understand this parameter, ignore it.
+        data_directory (set in postgresql.conf). It has the same 
+        default as PostgreSQL: the value of pgdata. Can usually be ignored.
       </longdesc>
-      <shortdesc lang="en">Path to the directory set in data_directory from your postgresql.conf file</shortdesc>
+      <shortdesc lang="en">data_directory (set in postgresql.conf).</shortdesc>
       <content type="string" default="PGDATA" />
     </parameter>
-
     <parameter name="pghost" unique="0" required="0">
       <longdesc lang="en">
         Host IP address or unix socket folder the instance is listening on.
@@ -1573,7 +1546,6 @@ def ocf_meta_data():
       <shortdesc lang="en">Instance IP or unix socket folder</shortdesc>
       <content type="string" default="$pghost_default" />
     </parameter>
-
     <parameter name="pgport" unique="0" required="0">
       <longdesc lang="en">
         Port the instance is listening on.
@@ -1581,16 +1553,13 @@ def ocf_meta_data():
       <shortdesc lang="en">Instance port</shortdesc>
       <content type="integer" default="$pgport_default" />
     </parameter>
-
     <parameter name="recovery_template" unique="1" required="0">
       <longdesc lang="en">
-        Path to the recovery.conf template. This file is simply copied to \$PGDATA
-        before starting the instance as slave
-      </longdesc>
+        Path of the recovery.conf template. This file is copied to \$PGDATA
+        before starting the instance as slave</longdesc>
       <shortdesc lang="en">Path to the recovery.conf template.</shortdesc>
       <content type="string" default="PGDATA/recovery.conf.pcmk" />
     </parameter>
-
     <parameter name="start_opts" unique="0" required="0">
       <longdesc lang="en">
         Additionnal arguments given to the postgres process on startup.
@@ -1598,10 +1567,9 @@ def ocf_meta_data():
         postgresql.conf file is not in the data directory (PGDATA), eg.:
         "-c config_file=/etc/postgresql/9.3/main/postgresql.conf".
       </longdesc>
-      <shortdesc lang="en">Additionnal arguments given to the postgres process on startup.</shortdesc>
+      <shortdesc lang="en">Additionnal arguments for postgres start.</shortdesc>
       <content type="string" default="$start_opts_default" />
     </parameter>
-
   </parameters>
   <actions>
     <action name="start" timeout="60" />
