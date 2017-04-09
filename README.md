@@ -7,16 +7,18 @@ Requires Python 3.6 and external module Paramiko.
 
 # Usage
 
-1. Prepare and export a VM in the OVA form. This VM needs:
-    1. An active root (ie with Ubuntu)
-    2. SELinux disabled
-    3. VirtualBox guest additions
-    4. Postgresql server 9.6 installed
-    5. pcs installed and enabled (disable corosync and pacemaker services)
-    
-2. Prepare JSON cluster file (eg cluster.json)
+1. Using VirtualBox, set up a VM that has:
+    1. root user enabled (ie with Ubuntu)
+    1. SELinux disabled
+    1. VirtualBox guest additions
+    1. Postgresql server 9.6 
+    1. pcs enabled (disable corosync and pacemaker services)
 
-2. Deploy the cluster: 
+1. Export the VM as an OVA file 
+    
+1. Update the JSON cluster file as needed (cluster.json)
+
+1. Deploy the cluster: 
    
         python src\app.py cluster.json
 
