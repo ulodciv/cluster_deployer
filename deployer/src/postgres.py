@@ -169,7 +169,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_set_param("hot_standby", "on")
         self.pg_set_param("hot_standby_feedback", "on")
 
-    def pg_write_recovery_for_pcmk(self):
+    def pg_write_recovery_for_pcmk(self, virtual_ip):
         repl_user = self.pg_replication_user
         # self.pg_stop()
         # self.ssh_run_check([
@@ -182,10 +182,10 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self._pg_add_to_pcmk_recovery_conf("recovery_target_timeline", "latest")
         # self._pg_add_to_pcmk_recovery_conf(
         #     "restore_command",
-        #     f"rsync -pog {self.cluster_vip}:wals_from_this/%f %p")
+        #     f"rsync -pog {virtual_ip}:wals_from_this/%f %p")
         self._pg_add_to_pcmk_recovery_conf(
             "primary_conninfo",
-            f"host={self.cluster_vip} port=5432 user={repl_user} "
+            f"host={virtual_ip} port=5432 user={repl_user} "
             f"application_name={self.name}")
 
     def pg_standby_backup_from_master(self, master: 'Postgres'):

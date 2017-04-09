@@ -81,7 +81,7 @@ class Cluster:
         master.pg_make_master(self.vms)
         master.pg_restart()
         master.pg_add_replication_slots(self.vms)
-        master.pg_write_recovery_for_pcmk()
+        master.pg_write_recovery_for_pcmk(self.virtual_ip)
         master.add_temp_ipv4_to_iface(self.ha_get_vip_ipv4())
 
     def deploy_part_4(self):
@@ -158,7 +158,6 @@ class Cluster:
             f"pgdata={self.master.pg_data_directory} "
             f"pghost=/var/run/postgresql "
             f"start_opts=\"{self.master.pg_start_opts}\" "
-            # start_opts -c config_file=/etc/postgresql/9.3/main/postgresql.conf
             f"op start timeout=60s "
             f"op stop timeout=60s "
             f"op promote timeout=30s "
@@ -218,6 +217,6 @@ class Vm(Vbox, Postgres):
         self.pg_drop_db(db)
         self.pg_create_db(db)
         self.ssh_run_check(
-            f"cd /tmp && psql -d {db} < /tmp/{db}/install.sql",
+            f"cd /tmp/{db} && psql -v ON_ERROR_STOP=1 -t -q -f install.sql {db}",
             self.pg_user)
         self.ssh_run_check(f'rm -rf /tmp/{db}')

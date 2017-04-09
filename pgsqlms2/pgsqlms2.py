@@ -7,9 +7,9 @@ import re
 import sys
 import tempfile
 from subprocess import call, check_output, CalledProcessError, STDOUT
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from distutils.version import StrictVersion
-from functools import partial, wraps
+from functools import partial
 from itertools import izip_longest, chain
 from tempfile import gettempdir
 from time import sleep
@@ -44,17 +44,6 @@ pgport_default = "5432"
 start_opts_default = ""
 
 
-def memoize(f):
-    cache = {}
-
-    @wraps(f)
-    def memoizer(*args, **kwargs):
-        if args not in cache:
-            cache[args] = f(*args, **kwargs)
-        return cache[args]
-    return memoizer
-
-
 def del_env(k):
     try:
         del os.environ[k]
@@ -72,78 +61,64 @@ def env_else(var, else_val=None):
     return else_val
 
 
-@memoize
 def get_pguser():
     return env_else('OCF_RESKEY_pguser', pguser_default)
 
 
-@memoize
 def get_bindir():
     return env_else('OCF_RESKEY_bindir', bindir_default)
 
 
-@memoize
 def get_pgdata():
     return env_else('OCF_RESKEY_pgdata', pgdata_default)
 
 
-@memoize
 def get_pghost():
     return env_else('OCF_RESKEY_pghost', pghost_default)
 
 
-@memoize
 def get_pgport():
     return env_else('OCF_RESKEY_pgport', pgport_default)
 
 
-@memoize
 def get_recovery_tpl():
-    return env_else('OCF_RESKEY_recovery_template',
-                    os.path.join(get_pgdata(), "recovery.conf.pcmk"))
+    return env_else(
+        'OCF_RESKEY_recovery_template',
+        os.path.join(get_pgdata(), "recovery.conf.pcmk"))
 
 
-@memoize
 def get_pgctl():
     return os.path.join(get_bindir(), "pg_ctl")
 
 
-@memoize
 def get_psql():
     return os.path.join(get_bindir(), "psql")
 
 
-@memoize
 def get_pgctrldata():
     return os.path.join(get_bindir(), "pg_controldata")
 
 
-@memoize
 def get_pgisready():
     return os.path.join(get_bindir(), "pg_isready")
 
 
-@memoize
 def get_pgxlogdump():
     return os.path.join(get_bindir(), "pg_xlogdump")
 
 
-@memoize
 def get_ha_bin():
     return env_else('HA_SBIN_DIR', '/usr/sbin')
 
 
-@memoize
 def get_ha_datefmt():
     return env_else('HA_DATEFMT', '%Y/%m/%d_%T ')
 
 
-@memoize
 def get_ha_debuglog():
     return env_else('HA_DEBUGLOG', '')
 
 
-@memoize
 def get_ocf_recource_instance():
     ret = env_else('OCF_RESOURCE_INSTANCE', '')
     if ret == '':
@@ -152,22 +127,18 @@ def get_ocf_recource_instance():
     return ret
 
 
-@memoize
 def get_crm_master():
     return os.path.join(get_ha_bin(), "crm_master") + " --lifetime forever"
 
 
-@memoize
 def get_crm_node():
     return os.path.join(get_ha_bin(), "crm_node")
 
 
-@memoize
 def get_crm_failcount():
     return os.path.join(get_ha_bin(), "crm_failcount")
 
 
-@memoize
 def get_pacemakerd():
     return os.path.join(get_ha_bin(), "pacemakerd")
 
@@ -232,10 +203,9 @@ log_info = partial(ocf_log, "INFO")
 log_debug = partial(ocf_log, "DEBUG")
 
 
-# Parse and returns the notify environment variables in a convenient structure
-# Returns undef if the action is not a notify
-# Returns undef if the resource is neither a clone or a multistate one
-@memoize
+# Returns the notify environment variables in a convenient(??) structure
+# Returns None if the action is not a notify
+# Returns None if the resource is neither a clone or a multistate one
 def get_notify_dict():
     if ocf_action != 'notify':
         return None
@@ -244,18 +214,12 @@ def get_notify_dict():
     notify_env = {
         'type': env_else('OCF_RESKEY_CRM_meta_notify_type', ''),
         'operation': env_else('OCF_RESKEY_CRM_meta_notify_operation', ''),
-        'active': [],
-        'inactive': [],
-        'start': [],
-        'stop': []}
+        'active': [], 'inactive': [], 'start': [], 'stop': []}
     actions = ['active', 'inactive', 'start', 'stop']
     if ocf_is_ms():  # exit if the resource is not a mutistate one
         actions.extend(['master', 'slave', 'promote', 'demote'])
         notify_env.update({
-            'master': [],
-            'slave': [],
-            'promote': [],
-            'demote': []})
+            'master': [], 'slave': [], 'promote': [], 'demote': []})
     for action in actions:
         rsc_key = "OCF_RESKEY_CRM_meta_notify_{}_resource".format(action)
         uname_key = "OCF_RESKEY_CRM_meta_notify_{}_uname".format(action)
@@ -288,7 +252,6 @@ def run_pgctrldata():
         return e.output
 
 
-@memoize
 def get_ocf_nodename():
     try:
         return check_output([get_crm_node(), "-n"]).strip()
@@ -443,23 +406,7 @@ def get_ha_nodes():
         sys.exit(OCF_ERR_GENERIC)
 
 
-# Check the write_location of secondaries, and adapt their master score so
-# that the instance closest to the master will be the selected candidate should
-# a promotion be triggered.
-# NOTE: This is only a hint to pacemaker! The selected candidate to promotion
-# actually re-checks that it is the best candidate and forces a re-election by
-# failing if a better one exists.
-# This avoid a race condition between the call of the monitor action and the
-# promotion where another slave might have catchup faster with the master.
-# NOTE: we cannot directly use write_location, nor lsn_diff as promotion score
-# because Pacemaker considers any value greater than 1,000,000 to be INFINITY.
-#
-# Supposed to be called from a master monitor action.
-def _check_locations():
-    nodename = get_ocf_nodename()
-    # Call crm_node to exclude nodes that are not part of the cluster at this
-    # point.
-    partition_nodes = get_ha_nodes()
+def get_connected_standbies():
     # We check locations of connected standbies by querying the
     # "pg_stat_replication" view.
     # The row_number applies on the result set ordered on write_location ASC so
@@ -488,47 +435,67 @@ def _check_locations():
     rc, rs = pg_execute(query)
     if rc != 0:
         log_err(
-            '_check_locations: query to get standby locations failed ({})', rc)
+            'get_connected_standbies: query to get standby locations failed ({})', rc)
         sys.exit(OCF_ERR_GENERIC)
-    # If there is no row left at this point, it means that there is no
-    # secondary instance connected.
     if not rs:
-        log_warn('_check_locations: No secondary connected')
+        log_warn('get_connected_standbies: No secondary connected')
+    nt = namedtuple('nt', 'application_name priority location state')
+    return [nt(*r) for r in rs]
+
+
+# Check the write_location of secondaries, and adapt their master score so
+# that the instance closest to the master will be the selected candidate should
+# a promotion be triggered.
+# NOTE: This is only a hint to pacemaker! The selected candidate to promotion
+# actually re-checks that it is the best candidate and forces a re-election by
+# failing if a better one exists.
+# This avoid a race condition between the call of the monitor action and the
+# promotion where another slave might have catchup faster with the master.
+# NOTE: we cannot directly use write_location, nor lsn_diff as promotion score
+# because Pacemaker considers any value greater than 1,000,000 to be INFINITY.
+#
+# Supposed to be called from a master monitor action.
+def _check_locations():
+    nodename = get_ocf_nodename()
+    # Call crm_node to exclude nodes that are not part of the cluster at this
+    # point.
+    partition_nodes = get_ha_nodes()
     # For each standby connected, set their master score based on the following
     # rule: the first known node/application, with the highest priority and
     # with an acceptable state.
-    for row in rs:
-        if row[0] not in partition_nodes:
+    for standby in get_connected_standbies():
+        if standby.application_name not in partition_nodes:
             log_info(
                 '_check_locations: ignoring unknown application_name/node "{}"',
-                row[0])
+                standby.application_name)
             continue
-        if row[0] == nodename:
+        if standby.application_name == nodename:
             log_warn('_check_locations: streaming replication with myself!')
             continue
-        node_score = get_master_score(row[0])
-        if row[3].strip() in ("startup", "backup"):
+        node_score = get_master_score(standby.application_name)
+        if standby.state.strip() in ("startup", "backup"):
             # We exclude any standby being in state backup (pg_basebackup) or
             # startup (new standby or failing standby)
             log_info('_check_locations: forbid promotion on "{}" in state {}, '
-                     'set score to -1', row[0], row[3])
+                     'set score to -1', standby.application_name, standby.state)
             if node_score != '-1':
-                set_master_score('-1', row[0])
+                set_master_score('-1', standby.application_name)
         else:
             log_debug(
                 '_check_locations: checking "{}" promotion ability '
                 '(current_score: {}, priority: {}, location: {}).',
-                row[0], node_score, row[1], row[2])
-            if node_score != row[1]:
+                standby.application_name, node_score,
+                standby.priority, standby.location)
+            if node_score != standby.priority:
                 log_info('_check_locations: update score of "{}" from {} to {}',
-                         row[0], node_score, row[1])
-                set_master_score(row[1], row[0])
+                         standby.application_name, node_score, standby.priority)
+                set_master_score(standby.priority, standby.application_name)
             else:
                 log_debug(
                     '_check_locations: "{}" keeps its current score of {}',
-                    row[0], row[1])
+                    standby.application_name, standby.priority)
         # Remove this node from the known nodes list.
-        partition_nodes.remove(row[0].strip())
+        partition_nodes.remove(standby.application_name.strip())
     # If there are still nodes in "partition_nodes", it means there is no
     # corresponding line in "pg_stat_replication".
     for node in partition_nodes:
@@ -937,7 +904,6 @@ def pg_stop():
     return OCF_ERR_GENERIC
 
 
-@memoize
 def get_attrd_updater():
     return os.path.join(get_ha_bin(), "attrd_updater")
 
@@ -953,32 +919,16 @@ def get_ha_private_attr(name, node=None):
     p = re.compile(r'^name=".*" host=".*" value="(.*)"$')
     m = p.findall(ans)
     if not m:
-        return ''
+        return ""
     return m[0]
 
 
-# Set the given private attribute name to the given value
-# Setting attributes is asynchronous, so wait until attribute is really set
 def set_ha_private_attr(name, val):
-    call([get_attrd_updater(), "-U", val, "-n", name, "-p"])
-    checks = 0
-    while get_ha_private_attr(name) != val:
-        if checks % 10 == 0:
-            log_debug('set_ha_private_attr: waiting to set "{}"...', name)
-        sleep(0.1)
-        checks += 1
+    return call([get_attrd_updater(), "-U", val, "-n", name, "-p"]) == 0
 
 
-# Delete the given private attribute.
-# Setting attributes is asynchronous, so wait until attribute is really deleted
 def del_ha_private_attr(name):
-    call([get_attrd_updater(), "-D", "-n", name, "-p"])
-    checks = 0
-    while get_ha_private_attr(name) != '':
-        if checks % 10 == 0:
-            log_debug('del_ha_private_attr: waiting to delete "{}"...', name)
-        sleep(0.1)
-        checks += 1
+    return call([get_attrd_updater(), "-D", "-n", name, "-p"]) == 0
 
 
 # Promote the secondary instance to primary

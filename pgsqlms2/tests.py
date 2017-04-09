@@ -14,7 +14,7 @@ from pgsqlms2 import (
     pg_execute, get_pg_ctl_status, get_ocf_status,
     OCF_NOT_RUNNING, get_ocf_nodename, get_ha_nodes,
     run_pgisready, confirm_stopped, OCF_ERR_GENERIC, OCF_SUCCESS,
-    get_recovery_tpl, pg_validate_all, pg_start)
+    get_recovery_tpl, pg_validate_all, pg_start, get_connected_standbies)
 
 
 # returns CENTOS, UBUNTU, DEBIAN, or something else
@@ -75,7 +75,7 @@ class TestPg(TestCase):
     tpl = """\
 standby_mode = on
 recovery_target_timeline = latest
-primary_conninfo = 'host=None port=15432 user=postgres application_name={}'
+primary_conninfo = 'host=/var/run/postgresql port=15432 user=postgres application_name={}'
 """.format(uname)
     conf_additions = """
 listen_addresses = '*'
@@ -131,12 +131,6 @@ wal_receiver_status_interval = 20s
     @classmethod
     def setUpClass(cls):
         cls.cleanup()
-        os.environ['OCF_RESKEY_pgdata'] = cls.pgdata_slave
-        os.environ['OCF_RESKEY_bindir'] = cls.pgbin
-        os.environ['OCF_RESKEY_pghost'] = "localhost"
-        os.environ['OCF_RESKEY_pgport'] = cls.pgport_slave
-        os.environ['OCF_RESKEY_start_opts'] = '-c config_file={}/postgresql.conf'.format(cls.pgdata_slave)
-        os.environ['OCF_RESOURCE_INSTANCE'] = "foo"
         # create master instance
         run_as_pg("mkdir -p -m 0700 {}".format(cls.pgdata_master))
         run_as_pg("{}/initdb -D {}".format(cls.pgbin, cls.pgdata_master))
@@ -144,7 +138,7 @@ wal_receiver_status_interval = 20s
             fh.write(cls.conf_additions.format(cls.pgport_master))
         with open(cls.pgdata_master + "/pg_hba.conf", "a") as fh:
             fh.write(cls.hba_additions)
-        cls.start_pg(cls.pgdata_master)
+        cls.start_pg_master()
         # backup master to slave and set it up as a standby
         run_as_pg("mkdir -p -m 0700 {}".format(cls.pgdata_slave))
         run_as_pg("pg_basebackup -D {} -d 'port={}' -Xs".format(
@@ -159,11 +153,11 @@ standby_mode = on
 recovery_target_timeline = latest
 primary_conninfo = 'port={}'
 """.format(cls.pgport_master))
-        cls.start_pg(cls.pgdata_slave)
+        cls.start_pg_slave()
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.cleanup()
+    # @classmethod
+    # def tearDownClass(cls):
+    #     cls.cleanup()
 
     def setUp(self):
         try:
@@ -171,6 +165,21 @@ primary_conninfo = 'port={}'
         except subprocess.CalledProcessError:
             pass
         run_as_pg("rm -f " + get_recovery_tpl(), False)
+        os.environ['OCF_RESKEY_bindir'] = self.pgbin
+        os.environ['OCF_RESKEY_start_opts'] = '-c config_file={}/postgresql.conf'.format(self.pgdata_slave)
+        # os.environ['OCF_RESKEY_pghost'] = "localhost"
+        self.set_env_to_slave()
+
+    @classmethod
+    def set_env_to_master(cls):
+        os.environ['OCF_RESKEY_pgdata'] = cls.pgdata_master
+        os.environ['OCF_RESKEY_pgport'] = cls.pgport_master
+
+    @classmethod
+    def set_env_to_slave(cls):
+        os.environ['OCF_RESKEY_pgdata'] = cls.pgdata_slave
+        os.environ['OCF_RESKEY_pgport'] = cls.pgport_slave
+        os.environ['OCF_RESOURCE_INSTANCE'] = "foo"
 
     def test_pg_validate_all(self):
         write_as_pg(get_recovery_tpl(), TestPg.tpl)
@@ -181,6 +190,9 @@ primary_conninfo = 'port={}'
         self.assertRaises(SystemExit, pg_start)
         write_as_pg(get_recovery_tpl(), TestPg.tpl)
         self.assertEqual(OCF_SUCCESS, pg_start())
+        # check if it is connecting to the master
+        self.set_env_to_master()
+        self.assertEqual("centos-pg-1", get_connected_standbies()[0].application_name)
 
     def test_run_pgisready(self):
         rc = run_pgisready()
