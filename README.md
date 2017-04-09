@@ -13,7 +13,6 @@ Requires Python 3.6 and external module Paramiko.
     3. VirtualBox guest additions
     4. Postgresql server 9.6 installed
     5. pcs installed and enabled (disable corosync and pacemaker services)
-    6. PAF installed (https://github.com/dalibo/PAF)
     
 2. Prepare JSON cluster file (eg cluster.json)
 

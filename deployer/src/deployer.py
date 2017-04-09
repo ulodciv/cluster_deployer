@@ -22,6 +22,7 @@ class Cluster:
         self.cluster_name = cluster_def["cluster_name"]
         self.virtual_ip = cluster_def["virtual_ip"]
         self.demo_db = cluster_def["demo_db"]
+        self.pg_ra = cluster_def["pg_ra"]
         common = {k: v for k, v in cluster_def.items() if k != "hosts"}
         common["paramiko_key"] = RSAKey.from_private_key_file(
             common["key_file"])
@@ -69,12 +70,10 @@ class Cluster:
             [partial(v.add_fingerprints, self.vms) for v in self.vms])
 
     def deploy_part_3(self):
-        local_ra_file = "src/ra/pgsqlms2.py"
+        remote_ra = "/usr/lib/ocf/resource.d/heartbeat/pgsqlms2"
         for vm in self.vms:
-            vm.sftp_put(
-                local_ra_file,
-                "/usr/lib/ocf/resource.d/heartbeat/pgsqlms2")
-            vm.ssh_run_check("chmod +x " + "/usr/lib/ocf/resource.d/heartbeat/pgsqlms2")
+            vm.sftp_put(self.pg_ra, remote_ra)
+            vm.ssh_run_check(f"chmod +x {remote_ra}")
         master = self.master
         master.pg_start()
         master.deploy_demo_db(self.demo_db)
@@ -155,7 +154,11 @@ class Cluster:
         self.master.ssh_run_check(
             f"pcs -f {self.ha_cluster_xml_file} "
             f"resource create pgsqld ocf:heartbeat:pgsqlms2 "
-            f"bindir=/usr/pgsql-9.6/bin pgdata=/var/lib/pgsql/9.6/data "
+            f"bindir={self.master.pg_bindir} "
+            f"pgdata={self.master.pg_data_directory} "
+            f"pghost=/var/run/postgresql "
+            f"start_opts=\"{self.master.pg_start_opts}\" "
+            # start_opts -c config_file=/etc/postgresql/9.3/main/postgresql.conf
             f"op start timeout=60s "
             f"op stop timeout=60s "
             f"op promote timeout=30s "

@@ -4,7 +4,6 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from enum import Enum, auto
 from ipaddress import IPv4Interface
-from pathlib import PurePosixPath
 from time import sleep
 
 from paramiko.ssh_exception import NoValidConnectionsError
@@ -82,9 +81,8 @@ class Linux(VmBase, metaclass=ABCMeta):
         pass
 
     def get_os_release(self):
-        os_release_file = PurePosixPath("/etc/os-release")
         with self.open_sftp() as sftp:
-            with sftp.file(str(os_release_file)) as f:
+            with sftp.file("/etc/os-release") as f:
                 return f.read().decode('utf-8')
 
     @property

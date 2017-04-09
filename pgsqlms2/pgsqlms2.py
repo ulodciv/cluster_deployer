@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2.7
 import os
 import pprint
 import datetime
@@ -36,10 +36,10 @@ RE_APP_NAME = re.compile(
     r"^\s*primary_conninfo\s*=.*['\s]application_name=(?P<name>.*?)['\s]", re.M)
 RE_PG_CLUSTER_STATE = re.compile(r"^Database cluster state:\s+(.*?)\s*$", re.M)
 
-system_user_default = "postgres"
+pguser_default = "postgres"
 bindir_default = "/usr/bin"
 pgdata_default = "/var/lib/pgsql/data"
-pghost_default = "/tmp"
+pghost_default = "/var/run/postgresql"
 pgport_default = "5432"
 start_opts_default = ""
 
@@ -73,8 +73,8 @@ def env_else(var, else_val=None):
 
 
 @memoize
-def get_system_user():
-    return env_else('OCF_RESKEY_system_user', system_user_default)
+def get_pguser():
+    return env_else('OCF_RESKEY_pguser', pguser_default)
 
 
 @memoize
@@ -98,19 +98,9 @@ def get_pgport():
 
 
 @memoize
-def get_start_opts():
-    return env_else('OCF_RESKEY_start_opts', start_opts_default)
-
-
-@memoize
 def get_recovery_tpl():
     return env_else('OCF_RESKEY_recovery_template',
                     os.path.join(get_pgdata(), "recovery.conf.pcmk"))
-
-
-@memoize
-def get_datadir():
-    return env_else('OCF_RESKEY_datadir', get_pgdata())
 
 
 @memoize
@@ -183,8 +173,8 @@ def get_pacemakerd():
 
 
 def as_postgres_user():
-    u = pwd.getpwnam(get_system_user())
-    os.initgroups(get_system_user(), u.pw_gid)
+    u = pwd.getpwnam(get_pguser())
+    os.initgroups(get_pguser(), u.pw_gid)
     os.setgid(u.pw_gid)
     os.setuid(u.pw_uid)
     os.seteuid(u.pw_uid)
@@ -293,7 +283,7 @@ def ocf_is_ms():
 
 def run_pgctrldata():
     try:
-        return check_output([get_pgctrldata(), get_datadir()])
+        return check_output([get_pgctrldata(), get_pgdata()])
     except CalledProcessError as e:
         return e.output
 
@@ -314,7 +304,7 @@ def pg_validate_all():
     if not os.path.isdir(get_pgdata()):
         log_err('PGDATA "{}" not found'.format(get_pgdata()))
         sys.exit(OCF_ERR_ARGS)
-    datadir = get_datadir()
+    datadir = get_pgdata()
     if not os.path.isdir(datadir):
         log_err('data_directory "{}" not found'.format(datadir))
         sys.exit(OCF_ERR_ARGS)
@@ -351,9 +341,9 @@ def pg_validate_all():
         sys.exit(OCF_ERR_ARGS)
     # check system user
     try:
-        pwd.getpwnam(get_system_user())
+        pwd.getpwnam(get_pguser())
     except KeyError:
-        log_crit('System user "{}" does not exist', get_system_user())
+        log_crit('System user "{}" does not exist', get_pguser())
         sys.exit(OCF_ERR_ARGS)
     # require 9.3 minimum
     try:
@@ -400,7 +390,7 @@ def run_pgisready():
 # Run the given command as the "system_user" by forking away from root
 def as_postgres(cmd):
     cmd = [str(c) for c in cmd]
-    log_debug('as_postgres: "{}" as {}', " ".join(cmd), get_system_user())
+    log_debug('as_postgres: "{}" as {}', " ".join(cmd), get_pguser())
     with open(os.devnull, 'w') as DEVNULL:
         return call(
             cmd, preexec_fn=as_postgres_user, stdout=DEVNULL, stderr=STDOUT)
@@ -419,10 +409,11 @@ def pg_execute(query):
     os.close(tmp_fh)
     os.chmod(tmp_filename, 0o644)
     try:
-        ans = check_output(
-            [get_psql(), '-v', 'ON_ERROR_STOP=1', '-qXAtf', tmp_filename, '-R',
-             RS, '-F', FS, '-p', get_pgport(), '-h', get_pghost(), connstr],
-            preexec_fn=as_postgres_user)
+        cmd = [
+            get_psql(), '-v', 'ON_ERROR_STOP=1', '-qXAtf', tmp_filename, '-R',
+            RS, '-F', FS, '-p', get_pgport(), '-h', get_pghost(), connstr]
+        log_debug('pg_execute: running {}', " ".join(cmd))
+        ans = check_output(cmd, preexec_fn=as_postgres_user)
     except CalledProcessError as e:
         log_debug('pg_execute: psql error, return code: {}', e.returncode)
         # Possible return codes:
@@ -594,7 +585,7 @@ def _confirm_role():
 # reported by its controldata file
 # WARNING: the status is NOT updated in case of crash.
 def get_pg_cluster_state():
-    datadir = get_datadir()
+    datadir = get_pgdata()
     finds = RE_PG_CLUSTER_STATE.findall(run_pgctrldata())
     if not finds:
         log_crit('get_pg_cluster_state: could not read state from controldata '
@@ -664,7 +655,7 @@ def confirm_stopped():
     # The PID file does not exist or the process is not available.
     log_debug('confirm_stopped: no postmaster process found for instance "{}"',
               inst)
-    if os.path.isfile(get_datadir() + "/backup_label"):
+    if os.path.isfile(get_pgdata() + "/backup_label"):
         # We are probably on a freshly built secondary that was not started yet.
         log_debug('confirm_stopped: backup_label file exists: probably '
                   'on a never started secondary')
@@ -782,9 +773,9 @@ def pg_monitor():
 #   primary_conninfo='...'
 #   recovery_target_timeline = 'latest'
 def _create_recovery_conf():
-    u = pwd.getpwnam(get_system_user())
+    u = pwd.getpwnam(get_pguser())
     uid, gid = u.pw_uid, u.pw_gid
-    recovery_file = os.path.join(get_datadir(), "recovery.conf")
+    recovery_file = os.path.join(get_pgdata(), "recovery.conf")
     recovery_tpl = get_recovery_tpl()
     log_debug('_create_recovery_conf: get replication configuration from '
               'the template file "{}"', recovery_tpl)
@@ -820,10 +811,11 @@ def _create_recovery_conf():
 
 # Start the local instance using pg_ctl
 def pg_ctl_start():
+    start_opts = env_else('OCF_RESKEY_start_opts', start_opts_default)
     # insanely long timeout to ensure Pacemaker gives up first
     cmd = [get_pgctl(), 'start', '-D', get_pgdata(), '-w', '-t', 1000000]
-    if get_start_opts():
-        cmd.extend(['-o', get_start_opts()])
+    if start_opts:
+        cmd.extend(['-o', start_opts])
     return as_postgres(cmd)
 
 
@@ -916,8 +908,7 @@ def pg_start():
                 log_info('pg_start: no master score around; set mine to 1')
                 set_master_score('1')
             return OCF_SUCCESS
-        log_err('pg_start: {} is not running as a slave (returned {})',
-                inst, rc)
+        log_err('pg_start: {} is not running as a slave (returned {})', inst, rc)
         return OCF_ERR_GENERIC
     log_err('pg_start: {} failed to start (rc: {})', inst, rc)
     return OCF_ERR_GENERIC
@@ -1102,9 +1093,9 @@ def pg_promote():
         # Promote the instance on the current node.
         log_err('pg_promote: error during promotion')
         return OCF_ERR_GENERIC
-    # promotion is asynchronous: wait for it to finish
+    # promote is asynchronous: wait for it to finish
     while pg_monitor() != OCF_RUNNING_MASTER:
-        log_debug('pg_promote: waiting for the promote to complete')
+        log_debug('pg_promote: waiting for promote to complete')
         sleep(1)
     log_info('pg_promote: promote complete')
     return OCF_SUCCESS
@@ -1114,7 +1105,7 @@ def pg_promote():
 # To demote a PostgreSQL instance, we must:
 #   * stop it gracefully
 #   * create recovery.conf with standby_mode = on
-#   * start it
+#   * start it back
 def pg_demote():
     inst = get_ocf_recource_instance()
     rc = pg_monitor()
@@ -1244,7 +1235,7 @@ def _check_switchover():
     # We need the last local checkpoint LSN and the last received LSN from
     # master to check in the WAL between these adresses if we have a
     # "checkpoint shutdown" using pg_xlogdump.
-    datadir = get_datadir()
+    datadir = get_pgdata()
     ans = run_pgctrldata()
     # Get the latest known TL
     p = re.compile(r"^Latest checkpoint's TimeLineID:\s+(\d+)\s*$", re.M)
@@ -1339,7 +1330,6 @@ def pgsql_notify_pre_promote():
     # one based on its current LSN location. The designated standby for
     # promotion is responsible to connect to each available nodes to check their
     # "lsn_location".
-    #
     # During the following promote action, pg_promote will use this
     # information to check if the instance to be promoted is the best one,
     # so we can avoid a race condition between the last successful monitor
@@ -1432,17 +1422,17 @@ def pgsql_notify_pre_stop():
     # in case of slave crash, we need to detect if the CRM tries to recover
     # the slaveclone. The usual transition is to do: stop->start
     #
-    # This transition can no twork because the instance is in
+    # This transition can not work because the instance is in
     # OCF_ERR_GENERIC step. So the stop action will fail, leading most
     # probably to fencing action.
     #
     # To avoid this, we try to start the instance in recovery from here.
-    # If it success, at least it will be stopped correctly with a normal
+    # If it succeeds, at least it will be stopped correctly with a normal
     # status. If it fails, it will be catched up in next steps.
     log_info('pg_notify: trying to start failing slave {}...',
              get_ocf_recource_instance())
     # Either the instance managed to start or it couldn't.
-    # We rely on the pg_ctk '-w' switch to take care of this. If it couldn't
+    # We rely on the pg_ctl '-w' switch to take care of this. If it couldn't
     # start, this error will be catched up later during the various checks
     pg_ctl_start()
     log_info('pg_notify: state is "{}" after recovery attempt',
@@ -1471,30 +1461,20 @@ def ocf_meta_data():
   <shortdesc lang="en">Manages PostgreSQL servers in replication</shortdesc>
   <parameters>
     <parameter name="system_user" unique="0" required="0">
-      <longdesc lang="en">
-        System user account used to run the PostgreSQL server
-      </longdesc>
-      <shortdesc lang="en">PostgreSQL system User</shortdesc>
-      <content type="string" default="{system_user_default}" />
+      <longdesc lang="en">PostgreSQL server user</longdesc>
+      <shortdesc lang="en">PostgreSQL server user</shortdesc>
+      <content type="string" default="{pguser_default}" />
     </parameter>
     <parameter name="bindir" unique="0" required="0">
-      <longdesc lang="en">Directory with PostgreSQL binaries. The agent uses 
+      <longdesc lang="en">Directory with PostgreSQL binaries. This RA uses 
       psql, pg_isready, pg_controldata and pg_ctl.</longdesc>
       <shortdesc lang="en">Path to the PostgreSQL binaries</shortdesc>
       <content type="string" default="{bindir_default}" />
     </parameter>
     <parameter name="pgdata" unique="1" required="0">
-      <longdesc lang="en">Path to the data directory, e.g. PGDATA</longdesc>
-      <shortdesc lang="en">Path to the data directory</shortdesc>
+      <longdesc lang="en">Data directory, e.g. PGDATA</longdesc>
+      <shortdesc lang="en">Data directory</shortdesc>
       <content type="string" default="{pgdata_default}" />
-    </parameter>
-    <parameter name="datadir" unique="1" required="0">
-      <longdesc lang="en">
-        data_directory (set in postgresql.conf). It has the same 
-        default as PostgreSQL: the value of pgdata. Can usually be ignored.
-      </longdesc>
-      <shortdesc lang="en">data_directory (set in postgresql.conf).</shortdesc>
-      <content type="string" default="PGDATA" />
     </parameter>
     <parameter name="pghost" unique="0" required="0">
       <longdesc lang="en">
@@ -1543,14 +1523,7 @@ def ocf_meta_data():
     <action name="validate-all" timeout="5" />
     <action name="methods" timeout="5" />
   </actions>
-</resource-agent>""".format(
-        system_user_default=system_user_default,
-        pghost_default=pghost_default,
-        start_opts_default=start_opts_default,
-        pgport_default=pgport_default,
-        bindir_default=bindir_default,
-        pgdata_default=pgdata_default
-    ))
+</resource-agent>""".format(**globals()))
 
 
 def ocf_methods():
@@ -1572,7 +1545,7 @@ def set_logtag():
     else:
         os.environ['HA_LOGTAG'] = "{}[{}]".format(script_name, os.getpid())
 
-# https://github.com/ClusterLabs/resource-agents/blob/master/doc/dev-guides/ra-dev-guide.asc
+
 if __name__ == "__main__":
     ocf_action = sys.argv[1]
     if 'OCF_RESKEY_CRM_meta_interval' not in os.environ:
@@ -1587,7 +1560,7 @@ if __name__ == "__main__":
                       "promote", "demote", "notify"):
         pg_validate_all()
         # No need to validate for meta-data, methods or validate-all.
-    if ocf_action == 'start':
+    if ocf_action == 'start':  # start as secondary only
         sys.exit(pg_start())
     if ocf_action == 'stop':
         sys.exit(pg_stop())

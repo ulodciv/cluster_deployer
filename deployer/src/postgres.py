@@ -21,6 +21,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self._pg_data_directory = None
         self._pg_hba_file = None
         self._pg_config_file = None
+        self._pg_bindir = None
+        self._pg_start_opts = None
         self._pg_recovery_file = None  # recovery.conf"
         self._pg_pcmk_recovery_file = None  # recovery.conf.pcmk"
 
@@ -33,6 +35,26 @@ class Postgres(Ssh, metaclass=ABCMeta):
             elif distro in (Distro.UBUNTU, Distro.DEBIAN):
                 self._pg_service = f"postgresql"
         return self._pg_service
+
+    @property
+    def pg_start_opts(self):
+        if self._pg_start_opts is None:
+            distro = self.distro
+            if distro == Distro.CENTOS:
+                self._pg_start_opts = ""
+            elif distro in (Distro.UBUNTU, Distro.DEBIAN):
+                self._pg_start_opts = f"-c config_file=/etc/postgresql/{Postgres.pg_version}/main/postgresql.conf"
+        return self._pg_start_opts
+
+    @property
+    def pg_bindir(self):
+        if self._pg_bindir is None:
+            distro = self.distro
+            if distro == Distro.CENTOS:
+                self._pg_bindir = f"/usr/pgsql-{Postgres.pg_version}/bin"
+            elif distro in (Distro.UBUNTU, Distro.DEBIAN):
+                self._pg_bindir = f"/usr/lib/postgresql/{Postgres.pg_version}/bin"
+        return self._pg_bindir
 
     @property
     def pg_recovery_file(self):
@@ -180,12 +202,10 @@ class Postgres(Ssh, metaclass=ABCMeta):
             primary_slot_name = 'node_a_slot'
         systemctl start postgresql-9.6
         """
-        repl_user = master.pg_replication_user
-        # self.pg_stop()
         self.ssh_run_check([
             f"mv {master.pg_data_directory} data_old",
             f"pg_basebackup -h {master.name} -D {master.pg_data_directory} "
-            f"-U {repl_user} -Xs"],
+            f"-U {master.pg_replication_user} -Xs"],
             self.pg_user)
 
         """
@@ -198,12 +218,11 @@ class Postgres(Ssh, metaclass=ABCMeta):
             f"rsync -pog {master.name}:wals_from_this/%f %p")
         self._pg_add_to_recovery_conf(
             "primary_conninfo",
-            f"host={master.ip} port=5432 user={repl_user}")
+            f"host={master.ip} port=5432 user={master.pg_replication_user}")
         """
         # self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
         self.ssh_run_check(
-            f"sed -i s/{master.name}/{self.name}/ "
-            f"{master.pg_pcmk_recovery_file}",
+            f"sed -i s/{master.name}/{self.name}/ {master.pg_pcmk_recovery_file}",
             self.pg_user)
         self.ssh_run_check(
             f"cp {master.pg_pcmk_recovery_file} "

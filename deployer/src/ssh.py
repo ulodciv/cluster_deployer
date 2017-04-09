@@ -219,6 +219,10 @@ class Ssh(Linux, metaclass=ABCMeta):
                 raise DeployerError(
                     f"AuthenticationException {user}@{self.ip} ({self.name}):\n"
                     f"{e}")
+            except TimeoutError as e:
+                raise DeployerError(
+                    f"TimeoutError {user}@{self.ip} ({self.name}):\n"
+                    f"{e}")
             yield client
 
     @contextmanager
