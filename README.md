@@ -8,7 +8,7 @@ Requires Python 3.6 and external module Paramiko.
 # Usage
 
 1. Using VirtualBox, set up a VM that has:
-    1. root user enabled (ie with Ubuntu)
+    1. the root user enabled (ie with Ubuntu)
     1. SELinux disabled
     1. VirtualBox guest additions
     1. Postgresql server 9.6 

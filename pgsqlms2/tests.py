@@ -4,9 +4,12 @@ import re
 import subprocess
 import pwd
 import logging
+import sys
+from cStringIO import StringIO
+from contextlib import contextmanager
 from subprocess import check_call, call
 from unittest import TestCase
-
+import xml.etree.ElementTree as ET
 
 from pgsqlms2 import (
     RE_TPL_TIMELINE, RE_APP_NAME, RE_PG_CLUSTER_STATE,
@@ -14,7 +17,21 @@ from pgsqlms2 import (
     pg_execute, get_pg_ctl_status, get_ocf_status,
     OCF_NOT_RUNNING, get_ocf_nodename, get_ha_nodes,
     run_pgisready, confirm_stopped, OCF_ERR_GENERIC, OCF_SUCCESS,
-    get_recovery_tpl, pg_validate_all, pg_start, get_connected_standbies)
+    get_recovery_tpl, get_connected_standbies, get_ha_private_attr,
+    set_ha_private_attr,
+    del_ha_private_attr, ocf_validate_all, ocf_start, ocf_stop, ocf_meta_data,
+    ocf_methods)
+
+
+@contextmanager
+def capture(command, *args, **kwargs):
+    out, sys.stdout = sys.stdout, StringIO()
+    try:
+        command(*args, **kwargs)
+        sys.stdout.seek(0)
+        yield sys.stdout.read()
+    finally:
+        sys.stdout = out
 
 
 # returns CENTOS, UBUNTU, DEBIAN, or something else
@@ -155,9 +172,9 @@ primary_conninfo = 'port={}'
 """.format(cls.pgport_master))
         cls.start_pg_slave()
 
-    # @classmethod
-    # def tearDownClass(cls):
-    #     cls.cleanup()
+    @classmethod
+    def tearDownClass(cls):
+        cls.cleanup()
 
     def setUp(self):
         try:
@@ -183,16 +200,23 @@ primary_conninfo = 'port={}'
 
     def test_pg_validate_all(self):
         write_as_pg(get_recovery_tpl(), TestPg.tpl)
-        rc = pg_validate_all()
+        rc = ocf_validate_all()
         self.assertEqual(OCF_SUCCESS, rc)
 
-    def test_pgsql_start(self):
-        self.assertRaises(SystemExit, pg_start)
+    def test_ra_action_start(self):
+        self.assertRaises(SystemExit, ocf_start)
         write_as_pg(get_recovery_tpl(), TestPg.tpl)
-        self.assertEqual(OCF_SUCCESS, pg_start())
+        self.assertEqual(OCF_SUCCESS, ocf_start())
         # check if it is connecting to the master
         self.set_env_to_master()
         self.assertEqual("centos-pg-1", get_connected_standbies()[0].application_name)
+
+    def test_ra_action_stop(self):
+        self.assertEqual(OCF_SUCCESS, ocf_stop())
+        self.start_pg_slave()
+        rc = run_pgisready()
+        self.assertEqual(0, rc)
+        self.assertEqual(OCF_SUCCESS, ocf_stop())
 
     def test_run_pgisready(self):
         rc = run_pgisready()
@@ -238,9 +262,6 @@ primary_conninfo = 'port={}'
         ocf_status = get_ocf_status()
         self.assertEqual(ocf_status, OCF_SUCCESS)
 
-    def test_dummy(self):
-        self.assertTrue(True)
-
 
 class TestHa(TestCase):
 
@@ -253,6 +274,32 @@ class TestHa(TestCase):
     def test_get_ocf_nodename(self):
         n = get_ocf_nodename()
         self.assertEqual(n, TestHa.uname)
+
+    def test_ha_private_attr(self):
+        del_ha_private_attr("bla")
+        self.assertEqual("", get_ha_private_attr("bla"))
+        set_ha_private_attr("bla", "1234")
+        n = get_ocf_nodename()
+        self.assertEqual("1234", get_ha_private_attr("bla"))
+        self.assertEqual("1234", get_ha_private_attr("bla", n))
+        self.assertEqual("", get_ha_private_attr("bla", n + "foo"))
+        del_ha_private_attr("bla")
+        self.assertEqual("", get_ha_private_attr("bla"))
+
+    def test_ocf_meta_data(self):
+        with capture(ocf_meta_data) as output:
+            s = str(output)
+        self.assertTrue(len(s) > 100)
+        root = ET.fromstring(s)
+        self.assertEqual(root.attrib["name"], "pgsqlms2")
+
+    def test_ocf_methods(self):
+        with capture(ocf_methods) as output:
+            s = str(output)
+        self.assertTrue(len(s) > 10)
+        methods = s.split("\n")
+        self.assertEqual(len(methods), 10)
+        self.assertIn("notify", methods)
 
 
 class TestRegExes(TestCase):
