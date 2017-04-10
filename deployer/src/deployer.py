@@ -78,6 +78,13 @@ class Cluster:
         master.pg_start()
         master.deploy_demo_db(self.demo_db)
         master.pg_create_replication_user()
+        hba_file = master.pg_hba_file
+        for vm in self.vms:
+            cmds = [
+                f'echo "host replication {h.pg_replication_user} {h.ip}/32 trust" ' 
+                f'>> {hba_file}'
+                for h in self.vms]
+            vm.ssh_run_check(cmds, vm.pg_user)
         master.pg_make_master(self.vms)
         master.pg_restart()
         master.pg_add_replication_slots(self.vms)

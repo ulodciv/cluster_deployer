@@ -154,11 +154,6 @@ class Postgres(Ssh, metaclass=ABCMeta):
         alter system set listen_addresses to '*';
         systemctl restart postgresql-9.6
         """
-        cmds = [
-            f'echo "host replication {h.pg_replication_user} {h.ip}/32 trust" ' 
-            f'>> {self.pg_hba_file}'
-            for h in all_hosts]
-        self.ssh_run_check(cmds, self.pg_user)
         self.pg_set_param("wal_level", "replica")
         self.pg_set_param("max_wal_senders", "5")
         self.pg_set_param("wal_keep_segments", "32")
