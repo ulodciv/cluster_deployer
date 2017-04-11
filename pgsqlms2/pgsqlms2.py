@@ -14,7 +14,6 @@ from itertools import izip_longest, chain
 from tempfile import gettempdir
 from time import sleep
 
-script_name = os.path.splitext(os.path.basename(__file__))[0]
 VERSION = "1.0"
 PROGRAM = "pgsqlms2"
 OCF_SUCCESS = 0
@@ -154,7 +153,6 @@ def ocf_log(level, msg, *args):
         else:
             sys.stderr.write(l + "\n")
         return 0
-    set_logtag()
     if env_else('HA_LOGD', 'no') == 'yes':
         if call(chain(['ha_logger', '-t', logtag, l])) == 0:
             return 0
@@ -1471,14 +1469,8 @@ def hadate():
 
 
 def set_logtag():
-    if env_else('HA_LOGTAG', "") != "":
-        return
-    inst = get_ocf_recource_instance()
-    if inst != "":
-        os.environ['HA_LOGTAG'] = "{}({})[{}]".format(
-            script_name, inst, os.getpid())
-    else:
-        os.environ['HA_LOGTAG'] = "{}[{}]".format(script_name, os.getpid())
+    inst = env_else('OCF_RESOURCE_INSTANCE', "<no OCF_RESOURCE_INSTANCE>")
+    os.environ['HA_LOGTAG'] = "{}:{}({})[{}]".format(PROGRAM, ocf_action, inst, os.getpid())
 
 
 if __name__ == "__main__":
@@ -1490,6 +1482,7 @@ if __name__ == "__main__":
             "OCF_RESKEY_OCF_CHECK_LEVEL"]
     else:
         os.environ["OCF_CHECK_LEVEL"] = "0"
+    set_logtag()
     os.chdir(gettempdir())
     if ocf_action in ("start", "stop", "monitor", "promote", "demote", "notify"):
         ocf_validate_all()

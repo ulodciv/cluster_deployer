@@ -23,4 +23,12 @@ Requires Python 3.6 and external module Paramiko.
         python src\app.py cluster.json
 
 # TODO
-Make work on VMWare.
+
+- Issues:
+	- RA should block slave instances that fail to stream from Master, at least with timeline fork issues, eg:
+		< 2017-04-11 22:54:41.032 CEST > LOG:  fetching timeline history file for timeline 3 from primary server
+		< 2017-04-11 22:54:41.034 CEST > FATAL:  could not start WAL streaming: ERROR:  requested starting point 0/9000000 on timeline 2 is not in this server's history
+        DETAIL:  This server's history forked from timeline 2 at 0/80001A8.
+	- Perhaps the RA could try to clean up a crashed instance by starting it and shutting it down
+
+- Make deployer work on VMWare.
