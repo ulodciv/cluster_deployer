@@ -5,7 +5,7 @@
   "users": ["root", "postgres", "repl1"],
   "pg_ra": "../pgsqlms2/pgsqlms2.py",
   "pg_user": "postgres",
-  "pg_replication_user": "repl1",
+  "pg_repl_user": "repl1",
   "root_password": "root",
   "key_file": "key/rsa_private.key",
   "pub_key_file": "key/rsa_pub.key",

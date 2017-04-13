@@ -12,10 +12,10 @@ class Postgres(Ssh, metaclass=ABCMeta):
     pg_version = "9.6"
     pg_lock = Lock()
 
-    def __init__(self, *, pg_user, pg_replication_user, **kwargs):
+    def __init__(self, *, pg_user, pg_repl_user, **kwargs):
         super(Postgres, self).__init__(**kwargs)
         self.pg_user = pg_user
-        self.pg_replication_user = pg_replication_user
+        self.pg_repl_user = pg_repl_user
         self.pg_slot = f"{self.name.replace('-', '_')}_slot"
         self._pg_service = None
         self._pg_data_directory = None
@@ -139,7 +139,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
 
     def pg_create_replication_user(self):
         self.ssh_run_check(
-            f'createuser {self.pg_replication_user} -c 5 --replication',
+            f'createuser {self.pg_repl_user} -c 5 --replication',
             self.pg_user)
 
     def pg_make_master(self, all_hosts):
@@ -165,7 +165,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_set_param("hot_standby_feedback", "on")
 
     def pg_write_recovery_for_pcmk(self, virtual_ip):
-        repl_user = self.pg_replication_user
+        repl_user = self.pg_repl_user
         # self.pg_stop()
         # self.ssh_run_check([
         #     f"mv {Postgres.pg_data_dir} data_old",
@@ -200,7 +200,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.ssh_run_check([
             f"mv {master.pg_data_directory} data_old",
             f"pg_basebackup -h {master.name} -D {master.pg_data_directory} "
-            f"-U {master.pg_replication_user} -Xs"],
+            f"-U {master.pg_repl_user} -Xs"],
             self.pg_user)
 
         """
@@ -213,7 +213,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             f"rsync -pog {master.name}:wals_from_this/%f %p")
         self._pg_add_to_recovery_conf(
             "primary_conninfo",
-            f"host={master.ip} port=5432 user={master.pg_replication_user}")
+            f"host={master.ip} port=5432 user={master.pg_repl_user}")
         """
         # self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
         self.ssh_run_check(

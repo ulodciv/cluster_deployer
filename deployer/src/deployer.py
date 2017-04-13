@@ -1,3 +1,4 @@
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path, PurePosixPath
@@ -81,12 +82,13 @@ class Cluster:
         hba_file = master.pg_hba_file
         for vm in self.vms:
             cmds = [
-                f'echo "host replication {h.pg_replication_user} {h.ip}/32 trust" ' 
+                f'echo "host replication {h.pg_repl_user} {h.ip}/32 trust" ' 
                 f'>> {hba_file}'
                 for h in self.vms]
             vm.ssh_run_check(cmds, vm.pg_user)
         master.pg_make_master(self.vms)
         master.pg_restart()
+        _ = master.pg_config_file
         master.pg_add_replication_slots(self.vms)
         master.pg_write_recovery_for_pcmk(self.virtual_ip)
         master.add_temp_ipv4_to_iface(self.ha_get_vip_ipv4())
@@ -158,13 +160,14 @@ class Cluster:
             f"pcs cluster cib {self.ha_cluster_xml_file}")
 
     def ha_add_pg_to_xml(self):
-        self.master.ssh_run_check(
+        master = self.master
+        master.ssh_run_check(
             f"pcs -f {self.ha_cluster_xml_file} "
             f"resource create pgsqld ocf:heartbeat:pgsqlms2 "
-            f"bindir={self.master.pg_bindir} "
-            f"pgdata={self.master.pg_data_directory} "
+            f"bindir={master.pg_bindir} "
+            f"pgdata={master.pg_data_directory} "
             f"pghost=/var/run/postgresql "
-            f"start_opts=\"{self.master.pg_start_opts}\" "
+            f"pgconf={master.pg_config_file} "
             f"op start timeout=60s "
             f"op stop timeout=60s "
             f"op promote timeout=30s "
@@ -172,7 +175,7 @@ class Cluster:
             f"op monitor interval=15s timeout=10s role=\"Master\" "
             f"op monitor interval=16s timeout=10s role=\"Slave\" "
             f"op notify timeout=60s")
-        self.master.ssh_run_check(
+        master.ssh_run_check(
             f"pcs -f {self.ha_cluster_xml_file} "
             f"resource master pgsql-ha pgsqld "
             f"master-max=1 master-node-max=1 "
