@@ -71,7 +71,7 @@ class Cluster:
             [partial(v.add_fingerprints, self.vms) for v in self.vms])
 
     def deploy_part_3(self):
-        remote_ra = "/usr/lib/ocf/resource.d/heartbeat/pgsqlms2"
+        remote_ra = "/usr/lib/ocf/resource.d/heartbeat/pgsqlha"
         for vm in self.vms:
             vm.sftp_put(self.pg_ra, remote_ra)
             vm.ssh_run_check(f"chmod +x {remote_ra}")
@@ -163,7 +163,7 @@ class Cluster:
         master = self.master
         master.ssh_run_check(
             f"pcs -f {self.ha_cluster_xml_file} "
-            f"resource create pgsqld ocf:heartbeat:pgsqlms2 "
+            f"resource create pgsqld ocf:heartbeat:pgsqlha "
             f"bindir={master.pg_bindir} "
             f"pgdata={master.pg_data_directory} "
             f"pghost=/var/run/postgresql "

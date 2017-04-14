@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 
 os.environ['OCF_RESOURCE_INSTANCE'] = "foo"
 
-import pgsqlms2 as PG
+import pgsqlha as RA
 
 
 # returns CENTOS, UBUNTU, DEBIAN, or something else
@@ -55,8 +55,8 @@ class TestPg(TestCase):
     pguid, pggid = pwd.getpwnam("postgres")[2:4]
     uname = subprocess.check_output("uname -n", shell=True).strip()
     pgversion = "9.6"
-    pgdata_master = "/tmp/pgsqlms2_test_master"
-    pgdata_slave = "/tmp/pgsqlms2_test_slave"
+    pgdata_master = "/tmp/pgsqlha_test_master"
+    pgdata_slave = "/tmp/pgsqlha_test_slave"
     pgport_master = "15432"
     pgport_slave = "15433"
     linux_distro = get_distro()
@@ -155,14 +155,14 @@ primary_conninfo = 'port={}'
         cls.cleanup()
 
     def setUp(self):
-        PG.OCF_ACTION = None
+        RA.OCF_ACTION = None
         if 'OCF_RESKEY_CRM_meta_interval' in os.environ:
             del os.environ['OCF_RESKEY_CRM_meta_interval']
         try:
             self.stop_pg_slave()
         except subprocess.CalledProcessError:
             pass
-        run_as_pg("rm -f " + PG.get_recovery_pcmk(), False)
+        run_as_pg("rm -f " + RA.get_recovery_pcmk(), False)
         os.environ['OCF_RESKEY_bindir'] = self.pgbin
         os.environ['OCF_RESKEY_start_opts'] = '-c config_file={}/postgresql.conf'.format(self.pgdata_slave)
         # os.environ['OCF_RESKEY_pghost'] = "localhost"
@@ -179,68 +179,68 @@ primary_conninfo = 'port={}'
         os.environ['OCF_RESKEY_pgport'] = cls.pgport_slave
 
     def test_pg_validate_all(self):
-        write_as_pg(PG.get_recovery_pcmk(), TestPg.tpl)
-        rc = PG.ocf_validate_all()
-        self.assertEqual(PG.OCF_SUCCESS, rc)
+        write_as_pg(RA.get_recovery_pcmk(), TestPg.tpl)
+        rc = RA.ocf_validate_all()
+        self.assertEqual(RA.OCF_SUCCESS, rc)
 
     def test_ra_action_start(self):
-        self.assertRaises(SystemExit, PG.ocf_start)
-        write_as_pg(PG.get_recovery_pcmk(), TestPg.tpl)
-        self.assertEqual(PG.OCF_SUCCESS, PG.ocf_start())
+        self.assertRaises(SystemExit, RA.ocf_start)
+        write_as_pg(RA.get_recovery_pcmk(), TestPg.tpl)
+        self.assertEqual(RA.OCF_SUCCESS, RA.ocf_start())
         # check if it is connecting to the master
         self.set_env_to_master()
-        self.assertEqual("centos-pg-1", PG.get_connected_standbies()[0].application_name)
+        self.assertEqual("centos-pg-1", RA.get_connected_standbies()[0].application_name)
 
     def test_ra_action_stop(self):
-        self.assertEqual(PG.OCF_SUCCESS, PG.ocf_stop())
+        self.assertEqual(RA.OCF_SUCCESS, RA.ocf_stop())
         self.start_pg_slave()
-        rc = PG.run_pgisready()
+        rc = RA.run_pgisready()
         self.assertEqual(0, rc)
-        self.assertEqual(PG.OCF_SUCCESS, PG.ocf_stop())
+        self.assertEqual(RA.OCF_SUCCESS, RA.ocf_stop())
 
     def test_run_pgisready(self):
-        rc = PG.run_pgisready()
+        rc = RA.run_pgisready()
         self.assertEqual(2, rc)
         self.start_pg_slave()
-        rc = PG.run_pgisready()
+        rc = RA.run_pgisready()
         self.assertEqual(0, rc)
 
     def test_confirm_stopped(self):
-        self.assertEqual(PG.OCF_NOT_RUNNING, PG.confirm_stopped())
+        self.assertEqual(RA.OCF_NOT_RUNNING, RA.confirm_stopped())
         self.start_pg_slave()
-        self.assertEqual(PG.OCF_ERR_GENERIC, PG.confirm_stopped())
+        self.assertEqual(RA.OCF_ERR_GENERIC, RA.confirm_stopped())
 
     def test_get_pg_ctl_status(self):
-        self.assertEqual(3, PG.get_pg_ctl_status())
+        self.assertEqual(3, RA.pg_ctl_status())
         self.start_pg_slave()
-        self.assertEqual(0, PG.get_pg_ctl_status())
+        self.assertEqual(0, RA.pg_ctl_status())
         self.stop_pg_slave()
-        self.assertEqual(3, PG.get_pg_ctl_status())
+        self.assertEqual(3, RA.pg_ctl_status())
 
     def test_get_pg_cluster_state(self):
-        state = PG.get_pg_cluster_state()
+        state = RA.get_pg_cluster_state()
         self.assertEqual('shut down in recovery', state)
         self.start_pg_slave()
-        state = PG.get_pg_cluster_state()
+        state = RA.get_pg_cluster_state()
         self.assertEqual('in archive recovery', state)
         self.stop_pg_slave()
-        state = PG.get_pg_cluster_state()
+        state = RA.get_pg_cluster_state()
         self.assertEqual('shut down in recovery', state)
 
     def test_pg_execute(self):
         self.start_pg_slave()
-        rc, rs = PG.pg_execute("SELECT pg_last_xlog_receive_location()")
+        rc, rs = RA.pg_execute("SELECT pg_last_xlog_receive_location()")
         self.assertEqual(0, rc)
-        rc, rs = PG.pg_execute("SELECT 25")
+        rc, rs = RA.pg_execute("SELECT 25")
         self.assertEqual(0, rc)
         self.assertEqual([["25"]], rs)
 
     def test_get_ocf_status_from_pg_cluster_state(self):
-        ocf_status = PG.get_ocf_status()
-        self.assertEqual(ocf_status, PG.OCF_NOT_RUNNING)
+        ocf_status = RA.get_ocf_status()
+        self.assertEqual(ocf_status, RA.OCF_NOT_RUNNING)
         self.start_pg_slave()
-        ocf_status = PG.get_ocf_status()
-        self.assertEqual(ocf_status, PG.OCF_SUCCESS)
+        ocf_status = RA.get_ocf_status()
+        self.assertEqual(ocf_status, RA.OCF_SUCCESS)
 
 
 class TestHa(TestCase):
@@ -248,54 +248,52 @@ class TestHa(TestCase):
     uname = subprocess.check_output("uname -n", shell=True).strip()
 
     def setUp(self):
-        PG.OCF_ACTION = None
+        RA.OCF_ACTION = None
         if 'OCF_RESKEY_CRM_meta_interval' in os.environ:
             del os.environ['OCF_RESKEY_CRM_meta_interval']
 
     def test_get_ha_nodes(self):
-        nodes = PG.get_ha_nodes()
+        nodes = RA.get_ha_nodes()
         self.assertIn(TestHa.uname, nodes)
 
     def test_get_ocf_nodename(self):
-        n = PG.get_ocf_nodename()
+        n = RA.get_ocf_nodename()
         self.assertEqual(n, TestHa.uname)
 
     def test_ha_private_attr(self):
-        PG.del_ha_private_attr("bla")
-        self.assertEqual("", PG.get_ha_private_attr("bla"))
-        PG.set_ha_private_attr("bla", "1234")
-        n = PG.get_ocf_nodename()
-        self.assertEqual("1234", PG.get_ha_private_attr("bla"))
-        self.assertEqual("1234", PG.get_ha_private_attr("bla", n))
-        self.assertEqual("", PG.get_ha_private_attr("bla", n + "foo"))
-        PG.del_ha_private_attr("bla")
-        self.assertEqual("", PG.get_ha_private_attr("bla"))
+        RA.del_ha_private_attr("bla")
+        self.assertEqual("", RA.get_ha_private_attr("bla"))
+        RA.set_ha_private_attr("bla", "1234")
+        n = RA.get_ocf_nodename()
+        self.assertEqual("1234", RA.get_ha_private_attr("bla"))
+        self.assertEqual("1234", RA.get_ha_private_attr("bla", n))
+        self.assertEqual("", RA.get_ha_private_attr("bla", n + "foo"))
+        RA.del_ha_private_attr("bla")
+        self.assertEqual("", RA.get_ha_private_attr("bla"))
 
     def test_ocf_meta_data(self):
-        s = PG.OCF_META_DATA
+        s = RA.OCF_META_DATA
         self.assertTrue(len(s) > 100)
         root = ET.fromstring(s)
-        self.assertEqual(root.attrib["name"], "pgsqlms2")
+        self.assertEqual(root.attrib["name"], "pgsqlha")
 
     def test_ocf_methods(self):
-        methods = PG.OCF_METHODS.split("\n")
+        methods = RA.OCF_METHODS.split("\n")
         self.assertEqual(len(methods), 9)
         self.assertIn("notify", methods)
 
-    def test_ocf_is_probe(self):
-        PG.OCF_ACTION = None
-        self.assertEqual(PG.ocf_is_probe(), False)
-        PG.OCF_ACTION = "monitor"
-        self.assertEqual(PG.ocf_is_probe(), True)
-        PG.OCF_ACTION = "start"
-        self.assertEqual(PG.ocf_is_probe(), False)
-        PG.OCF_ACTION = "monitor"
-        self.assertEqual(PG.ocf_is_probe(), True)
-        os.environ['OCF_RESKEY_CRM_meta_interval'] = "2"
-        self.assertEqual(PG.ocf_is_probe(), False)
+    # def test_monitor_of_failing_to_stream_slave(self):
+    #     pass
 
-    def test_monitor_of_failing_to_stream_slave(self):
-        pass
+    def test_get_notify_dict(self):
+        os.environ['OCF_RESKEY_CRM_meta_notify_type'] = "pre"
+        os.environ['OCF_RESKEY_CRM_meta_notify_operation'] = "promote"
+        os.environ['OCF_RESKEY_CRM_meta_notify_start_uname'] = "node1 node2"
+        os.environ['OCF_RESKEY_CRM_meta_notify_stop_uname'] = "node3 node4"
+        d = RA.get_notify_dict()
+        self.assertEqual(["node1", "node2"], d["nodes"]["start"])
+        import json
+        print(json.dumps(d, indent=4))
 
 
 class TestRegExes(TestCase):
@@ -311,15 +309,19 @@ pg_control last modified:             Fri 31 Mar 2017 10:01:29 PM CEST
 """
 
     def test_tpl_file(self):
-        m = PG.RE_TPL_TIMELINE.search(TestRegExes.tpl)
+        m = RA.RE_TPL_TIMELINE.search(TestRegExes.tpl)
         self.assertIsNotNone(m)
 
     def test_app_name(self):
-        m = PG.RE_APP_NAME.findall(TestRegExes.tpl)
+        m = RA.RE_APP_NAME.findall(TestRegExes.tpl)
         self.assertIsNotNone(m)
         self.assertEqual(m[0], "pc1234.home")
 
     def test_pg_cluster_state(self):
-        m = PG.RE_PG_CLUSTER_STATE.findall(TestRegExes.cluster_state)
+        m = RA.RE_PG_CLUSTER_STATE.findall(TestRegExes.cluster_state)
         self.assertIsNotNone(m)
         self.assertEqual(m[0], "in production")
+
+    # def test_val_level(self):
+    #     s = ""
+    #     m = re.findall(RA.RE_WAL_LEVEL, s, re.M)
