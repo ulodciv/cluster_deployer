@@ -2,14 +2,13 @@
 import os
 import re
 import subprocess
+from distutils.version import StrictVersion
+from tempfile import gettempdir
+
 import pwd
 from subprocess import check_call, call
-from unittest import TestCase
+import unittest
 import xml.etree.ElementTree as ET
-
-os.environ['OCF_RESOURCE_INSTANCE'] = "foo"
-
-import pgsqlha as RA
 
 
 # returns CENTOS, UBUNTU, DEBIAN, or something else
@@ -18,6 +17,24 @@ def get_distro():
         s = f.read()
     p = re.compile(r'^ID="?(?P<distro>\w+)"?', re.M)
     return p.findall(s)[0].upper()
+
+
+os.environ['OCF_RESOURCE_INSTANCE'] = "foo"
+pgversion = "9.6"
+linux_distro = get_distro()
+if linux_distro == "CENTOS":
+    pgbin = "/usr/pgsql-{}/bin".format(pgversion)
+elif linux_distro in ("DEBIAN", "UBUNTU"):
+    pgbin = "/usr/lib/postgresql/{}/bin".format(pgversion)
+else:
+    raise Exception("unknown linux distro: " + linux_distro)
+os.environ['OCF_RESKEY_bindir'] = pgbin
+
+
+import pgsqlha as RA
+
+
+os.chdir(gettempdir())
 
 
 def change_user_to_postgres():
@@ -50,22 +67,14 @@ def run_as_pg(cmd, check=True):
                 # stdout=DEVNULL, stderr=STDOUT)
 
 
-class TestPg(TestCase):
+class TestPg(unittest.TestCase):
     pguser = "postgres"
     pguid, pggid = pwd.getpwnam("postgres")[2:4]
     uname = subprocess.check_output("uname -n", shell=True).strip()
-    pgversion = "9.6"
     pgdata_master = "/tmp/pgsqlha_test_master"
     pgdata_slave = "/tmp/pgsqlha_test_slave"
     pgport_master = "15432"
     pgport_slave = "15433"
-    linux_distro = get_distro()
-    if linux_distro == "CENTOS":
-        pgbin = "/usr/pgsql-{}/bin".format(pgversion)
-    elif linux_distro in ("DEBIAN", "UBUNTU"):
-        pgbin = "/usr/lib/postgresql/{}/bin".format(pgversion)
-    else:
-        raise Exception("unknown linux distro: " + linux_distro)
     pgstart_opts = "'-c config_file={}/postgresql.conf'"
     tpl = """\
 standby_mode = on
@@ -87,7 +96,7 @@ wal_receiver_status_interval = 20s
     def start_pg(cls, pgdata):
         run_as_pg(
             "{0}/pg_ctl start -D {1} -o '-c config_file={1}/postgresql.conf' -w".format(
-                cls.pgbin, pgdata))
+                pgbin, pgdata))
 
     @classmethod
     def start_pg_master(cls):
@@ -99,7 +108,7 @@ wal_receiver_status_interval = 20s
 
     @classmethod
     def stop_pg(cls, pgdata):
-        run_as_pg("{}/pg_ctl stop -D {} -w".format(cls.pgbin, pgdata))
+        run_as_pg("{}/pg_ctl stop -D {} -w".format(pgbin, pgdata))
 
     @classmethod
     def stop_pg_master(cls):
@@ -111,7 +120,7 @@ wal_receiver_status_interval = 20s
 
     @classmethod
     def crash_stop_pg(cls, pgdata):
-        run_as_pg("{}/pg_ctl stop -D {} -w -m immediate".format(cls.pgbin, pgdata))
+        run_as_pg("{}/pg_ctl stop -D {} -w -m immediate".format(pgbin, pgdata))
 
     @classmethod
     def cleanup(cls):
@@ -128,7 +137,7 @@ wal_receiver_status_interval = 20s
         cls.cleanup()
         # create master instance
         run_as_pg("mkdir -p -m 0700 {}".format(cls.pgdata_master))
-        run_as_pg("{}/initdb -D {}".format(cls.pgbin, cls.pgdata_master))
+        run_as_pg("{}/initdb -D {}".format(pgbin, cls.pgdata_master))
         with open(cls.pgdata_master + "/postgresql.conf", "a") as fh:
             fh.write(cls.conf_additions.format(cls.pgport_master))
         with open(cls.pgdata_master + "/pg_hba.conf", "a") as fh:
@@ -163,7 +172,6 @@ primary_conninfo = 'port={}'
         except subprocess.CalledProcessError:
             pass
         run_as_pg("rm -f " + RA.get_recovery_pcmk(), False)
-        os.environ['OCF_RESKEY_bindir'] = self.pgbin
         os.environ['OCF_RESKEY_start_opts'] = '-c config_file={}/postgresql.conf'.format(self.pgdata_slave)
         # os.environ['OCF_RESKEY_pghost'] = "localhost"
         self.set_env_to_slave()
@@ -178,13 +186,11 @@ primary_conninfo = 'port={}'
         os.environ['OCF_RESKEY_pgdata'] = cls.pgdata_slave
         os.environ['OCF_RESKEY_pgport'] = cls.pgport_slave
 
-    def test_pg_validate_all(self):
-        write_as_pg(RA.get_recovery_pcmk(), TestPg.tpl)
-        rc = RA.ocf_validate_all()
-        self.assertEqual(RA.OCF_SUCCESS, rc)
-
     def test_ra_action_start(self):
         self.assertRaises(SystemExit, RA.ocf_start)
+        with self.assertRaises(SystemExit) as cm:
+            RA.ocf_start()
+        self.assertEqual(cm.exception.code, RA.OCF_ERR_CONFIGURED)
         write_as_pg(RA.get_recovery_pcmk(), TestPg.tpl)
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_start())
         # check if it is connecting to the master
@@ -242,8 +248,40 @@ primary_conninfo = 'port={}'
         ocf_status = RA.get_ocf_status()
         self.assertEqual(ocf_status, RA.OCF_SUCCESS)
 
+    def test_validate_all(self):
+        with self.assertRaises(SystemExit) as cm:
+            RA.ocf_validate_all()
+        self.assertEqual(cm.exception.code, RA.OCF_ERR_ARGS)
+        write_as_pg(RA.get_recovery_pcmk(), TestPg.tpl)
+        self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
+        try:
+            os.environ['OCF_RESKEY_bindir'] = "foo"
+            with self.assertRaises(SystemExit) as cm:
+                RA.ocf_validate_all()
+            self.assertEqual(cm.exception.code, RA.OCF_ERR_INSTALLED)
+        finally:
+            os.environ['OCF_RESKEY_bindir'] = pgbin
+        self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
+        try:
+            os.environ['OCF_RESKEY_pguser'] = "bar"
+            with self.assertRaises(SystemExit) as cm:
+                RA.ocf_validate_all()
+            self.assertEqual(cm.exception.code, RA.OCF_ERR_ARGS)
+        finally:
+            os.environ['OCF_RESKEY_pguser'] = RA.pguser_default
+        self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
+        ver_backup = RA.MIN_PG_VER
+        try:
+            RA.MIN_PG_VER = StrictVersion("100.1")
+            with self.assertRaises(SystemExit) as cm:
+                RA.ocf_validate_all()
+            self.assertEqual(cm.exception.code, RA.OCF_ERR_INSTALLED)
+        finally:
+            RA.MIN_PG_VER = ver_backup
+        self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
 
-class TestHa(TestCase):
+
+class TestHa(unittest.TestCase):
 
     uname = subprocess.check_output("uname -n", shell=True).strip()
 
@@ -290,13 +328,14 @@ class TestHa(TestCase):
         os.environ['OCF_RESKEY_CRM_meta_notify_operation'] = "promote"
         os.environ['OCF_RESKEY_CRM_meta_notify_start_uname'] = "node1 node2"
         os.environ['OCF_RESKEY_CRM_meta_notify_stop_uname'] = "node3 node4"
-        d = RA.get_notify_dict()
+        RA.set_notify_dict()
+        d = RA.notify_dict
         self.assertEqual(["node1", "node2"], d["nodes"]["start"])
         import json
         print(json.dumps(d, indent=4))
 
 
-class TestRegExes(TestCase):
+class TestRegExes(unittest.TestCase):
     tpl = """\
 primary_conninfo = 'user=postgres host=127.0.0.1 port=15432 application_name=pc1234.home'
 recovery_target_timeline = 'latest'
@@ -309,19 +348,22 @@ pg_control last modified:             Fri 31 Mar 2017 10:01:29 PM CEST
 """
 
     def test_tpl_file(self):
-        m = RA.RE_TPL_TIMELINE.search(TestRegExes.tpl)
+        m = re.search(RA.RE_TPL_TIMELINE, TestRegExes.tpl, re.M)
         self.assertIsNotNone(m)
 
     def test_app_name(self):
-        m = RA.RE_APP_NAME.findall(TestRegExes.tpl)
+        m = re.findall(RA.RE_APP_NAME, TestRegExes.tpl, re.M)
         self.assertIsNotNone(m)
         self.assertEqual(m[0], "pc1234.home")
 
     def test_pg_cluster_state(self):
-        m = RA.RE_PG_CLUSTER_STATE.findall(TestRegExes.cluster_state)
+        m = re.findall(RA.RE_PG_CLUSTER_STATE, TestRegExes.cluster_state, re.M)
         self.assertIsNotNone(m)
         self.assertEqual(m[0], "in production")
 
     # def test_val_level(self):
     #     s = ""
     #     m = re.findall(RA.RE_WAL_LEVEL, s, re.M)
+
+if __name__ == '__main__':
+    unittest.main()

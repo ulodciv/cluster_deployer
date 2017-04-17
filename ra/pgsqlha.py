@@ -1,11 +1,13 @@
 #!/usr/bin/python2.7
+from __future__ import division, print_function, unicode_literals
 import os
 import json
-import datetime
 import pwd
 import re
 import sys
 import tempfile
+from datetime import datetime
+from itertools import chain
 from subprocess import call, check_output, CalledProcessError, STDOUT
 from collections import defaultdict, namedtuple, OrderedDict
 from distutils.version import StrictVersion
@@ -28,12 +30,10 @@ OCF_NOT_RUNNING = 7
 OCF_RUNNING_MASTER = 8
 OCF_FAILED_MASTER = 9
 RE_WAL_LEVEL = r"^wal_level setting:\s+(.*?)\s*$"
-RE_TPL_TIMELINE = re.compile(
-    r"^\s*recovery_target_timeline\s*=\s*'?latest'?\s*$", re.M)
-RE_STANDBY_MODE = re.compile(r"^\s*standby_mode\s*=\s*'?on'?\s*$", re.M)
-RE_APP_NAME = re.compile(
-    r"^\s*primary_conninfo\s*=.*['\s]application_name=(?P<name>.*?)['\s]", re.M)
-RE_PG_CLUSTER_STATE = re.compile(r"^Database cluster state:\s+(.*?)\s*$", re.M)
+RE_TPL_TIMELINE = r"^\s*recovery_target_timeline\s*=\s*'?latest'?\s*$"
+RE_STANDBY_MODE = r"^\s*standby_mode\s*=\s*'?on'?\s*$"
+RE_APP_NAME = r"^\s*primary_conninfo\s*=.*['\s]application_name=(?P<n>.*?)['\s]"
+RE_PG_CLUSTER_STATE = r"^Database cluster state:\s+(.*?)\s*$"
 pguser_default = "postgres"
 bindir_default = "/usr/bin"
 pgdata_default = "/var/lib/pgsql/data"
@@ -107,55 +107,38 @@ notify
 methods
 meta-data
 validate-all"""
-
-
-def env_else(var, else_val=None):
-    try:
-        v = os.environ[var]
-        if v:
-            return v
-    except KeyError:
-        pass
-    return else_val
-
-
-RSC_INST = env_else('OCF_RESOURCE_INSTANCE')
+RSC_INST = os.environ.get('OCF_RESOURCE_INSTANCE')
 OCF_ACTION = sys.argv[1] if len(sys.argv) > 1 else None
 LOG_TAG = "{}:{}({})[{}]".format(PROGRAM, OCF_ACTION, RSC_INST, os.getpid())
 notify_dict = None
 
 
 def hadate():
-    return datetime.datetime.now().strftime(get_ha_datefmt())
+    return datetime.now().strftime(os.environ.get('HA_DATEFMT', '%Y/%m/%d_%T'))
 
 
 def get_pguser():
-    return env_else('OCF_RESKEY_pguser', pguser_default)
+    return os.environ.get('OCF_RESKEY_pguser', pguser_default)
 
 
 def get_bindir():
-    return env_else('OCF_RESKEY_bindir', bindir_default)
+    return os.environ.get('OCF_RESKEY_bindir', bindir_default)
 
 
 def get_pgdata():
-    return env_else('OCF_RESKEY_pgdata', pgdata_default)
+    return os.environ.get('OCF_RESKEY_pgdata', pgdata_default)
 
 
 def get_pghost():
-    return env_else('OCF_RESKEY_pghost', pghost_default)
+    return os.environ.get('OCF_RESKEY_pghost', pghost_default)
 
 
 def get_pgport():
-    return env_else('OCF_RESKEY_pgport', pgport_default)
+    return os.environ.get('OCF_RESKEY_pgport', pgport_default)
 
 
 def get_recovery_pcmk():
     return os.path.join(get_pgdata(), "recovery.conf.pcmk")
-
-
-def get_postgresql_conf():
-    return env_else(
-        'OCF_RESKEY_pgconf', os.path.join(get_pgdata(), "postgresql.conf"))
 
 
 def get_pgctl():
@@ -175,15 +158,11 @@ def get_pgisready():
 
 
 def get_ha_bin():
-    return env_else('HA_SBIN_DIR', '/usr/sbin')
-
-
-def get_ha_datefmt():
-    return env_else('HA_DATEFMT', '%Y/%m/%d_%T ')
+    return os.environ.get('HA_SBIN_DIR', '/usr/sbin')
 
 
 def get_ha_debuglog():
-    return env_else('HA_DEBUGLOG', '')
+    return os.environ.get('HA_DEBUGLOG', "")
 
 
 def get_crm_master():
@@ -208,36 +187,35 @@ def as_postgres_user():
 
 def ocf_log(level, msg, *args):
     l = level + ": " + msg.format(*args)
-    if env_else('HA_LOGFACILITY', 'none') == 'none':
-        os.environ['HA_LOGFACILITY'] = ''
-    ha_logfacility = env_else('HA_LOGFACILITY', '')
+    if os.environ.get('HA_LOGFACILITY', 'none') == 'none':
+        os.environ['HA_LOGFACILITY'] = ""
+    ha_logfacility = os.environ.get('HA_LOGFACILITY', "")
     # if we're connected to a tty, then output to stderr
     if sys.stderr.isatty():
         sys.stderr.write("{}: {}\n".format(LOG_TAG, l))
         return 0
-    if env_else('HA_LOGD', '') == 'yes':
+    if os.environ.get('HA_LOGD', "") == 'yes':
         if call(['ha_logger', '-t', LOG_TAG, l]) == 0:
             return 0
-    if ha_logfacility != '':
+    if ha_logfacility != "":
         # logging through syslog
         # loglevel is unknown, use 'notice' for now
         if level in ("ERROR", "CRIT"):
-            loglevel = "err"
+            level = "err"
         elif level == "WARNING":
-            loglevel = "warning"
+            level = "warning"
         elif level == "INFO":
-            loglevel = "info"
+            level = "info"
         elif level == "DEBUG":
-            loglevel = "debug"
+            level = "debug"
         else:
-            loglevel = "notice"
-        call(['logger', '-t', LOG_TAG, '-p', ha_logfacility + "." + loglevel, l])
-    ha_logfile = env_else('HA_LOGFILE', '')
-    if ha_logfile != '':
+            level = "notice"
+        call(["logger", "-t", LOG_TAG, "-p", ha_logfacility + "." + level, l])
+    ha_logfile = os.environ.get("HA_LOGFILE")
+    if ha_logfile:
         with open(ha_logfile, "a") as f:
             f.write("{}: {} {}\n".format(LOG_TAG, hadate(), l))
-    # appending to stderr
-    if not ha_logfile and not ha_logfacility:
+    elif not ha_logfacility:
         sys.stderr.write("{} {}\n".format(hadate(), l))
     ha_debuglog = get_ha_debuglog()
     if ha_debuglog and ha_debuglog != ha_logfile:
@@ -280,16 +258,19 @@ def del_ha_private_attr(name):
     return call([get_attrd_updater(), "-D", "-n", name, "-p", "-d", "0"]) == 0
 
 
-def get_notify_dict():
+def set_notify_dict():
     d = OrderedDict()
-    d['type'] = env_else('OCF_RESKEY_CRM_meta_notify_type', '')
-    d['operation'] = env_else('OCF_RESKEY_CRM_meta_notify_operation', '')
-    d['nodes'] = defaultdict(list)
-    for action in ['start', 'stop', 'master', 'slave', 'promote', 'demote']:
-        v = env_else("OCF_RESKEY_CRM_meta_notify_{}_uname".format(action), '')
-        if v.strip():
-            d['nodes'][action].extend(v.split())
-    return d
+    d["type"] = os.environ.get("OCF_RESKEY_CRM_meta_notify_type", "")
+    d["operation"] = os.environ.get("OCF_RESKEY_CRM_meta_notify_operation", "")
+    d["nodes"] = defaultdict(list)
+    start, end = "OCF_RESKEY_CRM_meta_notify_", "_uname"
+    for k, v in os.environ.items():
+        if k.startswith(start) and k.endswith(end):
+            action = k[len(start):-len(end)]
+            if v.strip():
+                d["nodes"][action].extend(v.split())
+    global notify_dict
+    notify_dict = d
 
 
 def run_pgctrldata():
@@ -306,115 +287,39 @@ def get_ocf_nodename():
         sys.exit(OCF_ERR_GENERIC)
 
 
-def ocf_validate_all():
-    # check binaries
-    if not all(os.access(f, os.X_OK) for f in [
-            get_pgctl(), get_psql(), get_pgisready(), get_pgctrldata()]):
-        sys.exit(OCF_ERR_INSTALLED)
-    if not os.path.isdir(get_pgdata()):
-        log_err('PGDATA "{}" not found'.format(get_pgdata()))
-        sys.exit(OCF_ERR_ARGS)
-    datadir = get_pgdata()
-    if not os.path.isdir(datadir):
-        log_err('data_directory "{}" not found'.format(datadir))
-        sys.exit(OCF_ERR_ARGS)
-    # check PG_VERSION
-    f = os.path.join(datadir, "PG_VERSION")
-    if not os.path.isfile(f) or os.stat(f).st_size <= 0:
-        log_crit('PG_VERSION not found in "{}"'.format(datadir))
-        sys.exit(OCF_ERR_ARGS)
-    # check recovery template
-    recovery_tpl = get_recovery_pcmk()
-    if not os.path.isfile(recovery_tpl):
-        log_crit('Recovery template "{}" not found'.format(recovery_tpl))
-        sys.exit(OCF_ERR_ARGS)
-    # check content of the recovery template file
-    try:
-        with open(recovery_tpl) as f:
-            content = f.read()
-    except:
-        log_crit('Could not open or read file "{}"'.format(recovery_tpl))
-        sys.exit(OCF_ERR_ARGS)
-    if not RE_STANDBY_MODE.search(content):
-        log_crit(
-            'Recovery template file {} must contain "standby_mode = on"',
-            recovery_tpl)
-        sys.exit(OCF_ERR_ARGS)
-    if not RE_TPL_TIMELINE.search(content):
-        log_crit(
-            "Recovery template lacks \"recovery_target_timeline = 'latest'\"")
-        sys.exit(OCF_ERR_ARGS)
-    m = RE_APP_NAME.findall(content)
-    if not m or not m[0].startswith(get_ocf_nodename()):
-        log_crit('Recovery template missing parameter "application_name={}" in '
-                 'primary_conninfo', get_ocf_nodename())
-        sys.exit(OCF_ERR_ARGS)
-    # check system user
-    try:
-        pwd.getpwnam(get_pguser())
-    except KeyError:
-        log_crit('System user "{}" does not exist', get_pguser())
-        sys.exit(OCF_ERR_ARGS)
-    # require 9.5 minimum
-    try:
-        with open(os.path.join(datadir, "PG_VERSION")) as f:
-            ver = StrictVersion(f.read())
-    except:
-        log_crit("Can't open {}", os.path.join(datadir, "PG_VERSION"))
-        sys.exit(OCF_ERR_ARGS)
-    if ver < MIN_PG_VER:
-        log_err("PostgreSQL {} is too old: >= 9.5 required", ver)
-        sys.exit(OCF_ERR_INSTALLED)
-    # require wal_level >= hot_standby
-    finds = re.findall(RE_WAL_LEVEL, run_pgctrldata(), re.M)
-    if not finds:
-        log_crit('Could not read wal_level setting')
-        sys.exit(OCF_ERR_ARGS)
-    if finds[0] not in ('hot_standby', 'logical', 'replica'):
-        log_crit('wal_level must be hot_standby, logical or replica')
-        sys.exit(OCF_ERR_ARGS)
-    return OCF_SUCCESS
-
-
-# Returns 0 if instance is listening on the given host/port, otherwise:
-#   1: ping rejected (usually when instance is in startup, in crash
-#      recovery, in warm standby, or when a shutdown is in progress)
-#   2: no response, usually means the instance is down
-#   3: no attempt, probably a syntax error, should not happen
+# see https://www.postgresql.org/docs/current/static/app-pg-isready.html
 def run_pgisready():
-    return as_postgres(
-        [get_pgisready(), '-h', get_pghost(), '-p', get_pgport()])
+    return as_postgres([get_pgisready(), "-h", get_pghost(), "-p", get_pgport()])
 
 
-# Run the given command as the "pg_user" by forking away from root
 def as_postgres(cmd):
     cmd = [str(c) for c in cmd]
-    log_debug('as_postgres: "{}" as {}', " ".join(cmd), get_pguser())
-    with open(os.devnull, 'w') as DEVNULL:
-        return call(cmd, cwd="/tmp", preexec_fn=as_postgres_user,
-                    stdout=DEVNULL, stderr=STDOUT)
+    log_debug("as {}; {}", get_pguser(), " ".join(cmd))
+    with open(os.devnull, "w") as DEVNULL:
+        return call(
+            cmd, preexec_fn=as_postgres_user, stdout=DEVNULL, stderr=STDOUT)
 
 
-# Run a query using psql.
 def pg_execute(query):
     connstr = "dbname=postgres"
     RS = chr(30)  # RS (record separator)
     FS = chr(3)  # ETX (end of text)
-    tmp_fh, tmp_filename = tempfile.mkstemp(prefix='pgsqlms-')
-    # if there is an error to catch, do:
-    # ocf_log( 'crit', 'pg_execute: could not create or write in a temp file');
-    # exit $OCF_ERR_INSTALLED;
-    os.write(tmp_fh, query)
-    os.close(tmp_fh)
-    os.chmod(tmp_filename, 0o644)
+    try:
+        tmp_fh, tmp_filename = tempfile.mkstemp(prefix="pgsqlms-")
+        os.write(tmp_fh, query)
+        os.close(tmp_fh)
+        os.chmod(tmp_filename, 0o644)
+    except:
+        log_crit("could not create or write in a temp file")
+        sys.exit(OCF_ERR_INSTALLED)
     try:
         cmd = [
-            get_psql(), '-v', 'ON_ERROR_STOP=1', '-qXAtf', tmp_filename, '-R',
-            RS, '-F', FS, '-p', get_pgport(), '-h', get_pghost(), connstr]
-        log_debug('pg_execute: running {}', " ".join(cmd))
-        ans = check_output(cmd, cwd="/tmp", preexec_fn=as_postgres_user)
+            get_psql(), "-v", "ON_ERROR_STOP=1", "-qXAtf", tmp_filename, "-R",
+            RS, "-F", FS, "-p", get_pgport(), "-h", get_pghost(), connstr]
+        log_debug(" ".join(cmd).replace(RS, "<RS>").replace(FS, "<FS>"))
+        ans = check_output(cmd, preexec_fn=as_postgres_user)
     except CalledProcessError as e:
-        log_debug('pg_execute: psql error, return code: {}', e.returncode)
+        log_debug("psql error, return code: {}", e.returncode)
         # Possible return codes:
         #  -1: wrong parameters
         #   1: failed to get resources (memory, missing file, ...)
@@ -428,17 +333,15 @@ def pg_execute(query):
         ans = ans[:-1]
         for record in ans.split(RS):
             rs.append(record.split(FS))
-        log_debug('pg_execute: rs: {}', rs)
+        log_debug("rs: {}", rs)
     return 0, rs
 
 
 def get_ha_nodes():
-    cmd = [get_crm_node(), "-p"]
     try:
-        return check_output(cmd).split()
+        return check_output([get_crm_node(), "-p"]).split()
     except CalledProcessError as e:
-        log_err(
-            'get_ha_nodes: {} failed with return code {}', cmd, e.returncode)
+        log_err("{} failed with return code {}", e.cmd, e.returncode)
         sys.exit(OCF_ERR_GENERIC)
 
 
@@ -470,13 +373,11 @@ def get_connected_standbies():
     """
     rc, rs = pg_execute(query)
     if rc != 0:
-        log_err(
-            'get_connected_standbies: query to get standby locations failed ({})',
-            rc)
+        log_err("query to get standby locations failed ({})", rc)
         sys.exit(OCF_ERR_GENERIC)
     if not rs:
-        log_warn('get_connected_standbies: No secondary connected')
-    nt = namedtuple('nt', 'application_name priority location state')
+        log_warn("no secondary connected")
+    nt = namedtuple("nt", "application_name priority location state")
     return [nt(*r) for r in rs]
 
 
@@ -502,35 +403,31 @@ def check_locations():
     # with an acceptable state.
     for standby in get_connected_standbies():
         if standby.application_name not in partition_nodes:
-            log_info(
-                'check_locations: ignoring unknown application_name/node "{}"',
-                standby.application_name)
+            log_info("ignoring unknown application_name/node {}",
+                     standby.application_name)
             continue
         if standby.application_name == nodename:
-            log_warn('check_locations: streaming replication with myself!')
+            log_warn("streaming replication with myself!")
             continue
         node_score = get_master_score(standby.application_name)
         if standby.state.strip() in ("startup", "backup"):
             # We exclude any standby being in state backup (pg_basebackup) or
             # startup (new standby or failing standby)
-            log_info('check_locations: forbid promotion on "{}" in state {}, '
-                     'set score to -1', standby.application_name, standby.state)
-            if node_score != '-1':
-                set_master_score('-1', standby.application_name)
+            log_info("forbid promotion on {} in state '{}', set score to -1",
+                     standby.application_name, standby.state)
+            if node_score != "-1":
+                set_master_score("-1", standby.application_name)
         else:
-            log_debug(
-                'check_locations: checking "{}" promotion ability '
-                '(current_score: {}, priority: {}, location: {}).',
-                standby.application_name, node_score,
-                standby.priority, standby.location)
+            log_debug("checking {} promotion ability (current_score: {}, "
+                      "priority: {}, location: {})", standby.application_name,
+                      node_score, standby.priority, standby.location)
             if node_score != standby.priority:
-                log_info('check_locations: update score of "{}" from {} to {}',
+                log_info("update score of {} from {} to {}",
                          standby.application_name, node_score, standby.priority)
                 set_master_score(standby.priority, standby.application_name)
             else:
-                log_debug(
-                    'check_locations: "{}" keeps its current score of {}',
-                    standby.application_name, standby.priority)
+                log_debug("{} keeps its current score of {}",
+                          standby.application_name, standby.priority)
         # Remove this node from the known nodes list.
         partition_nodes.remove(standby.application_name.strip())
     # If there are still nodes in "partition_nodes", it means there is no
@@ -539,13 +436,12 @@ def check_locations():
         # Exclude the current node.
         if node == nodename:
             continue
-        log_warn('check_locations: "{}" is not connected to the primary, '
-                 'set score to -1000', node)
-        set_master_score('-1000', node)
+        log_warn("{} is not connected to the primary, set score to -1000", node)
+        set_master_score("-1000", node)
     # Finally set the master score if not already done
     node_score = get_master_score()
     if node_score != "1001":
-        set_master_score('1001')
+        set_master_score("1001")
     return OCF_SUCCESS
 
 
@@ -556,31 +452,31 @@ def confirm_role():
     is_in_recovery = rs[0][0]
     if rc == 0:
         # The query was executed, check the result.
-        if is_in_recovery == 't':
+        if is_in_recovery == "t":
             # The instance is a secondary.
-            log_debug("confirm_role: instance {} is a secondary", RSC_INST)
+            log_debug("{} is a secondary", RSC_INST)
             return OCF_SUCCESS
-        elif is_in_recovery == 'f':
+        elif is_in_recovery == "f":
             # The instance is a primary.
-            log_debug("confirm_role: instance {} is a primary", RSC_INST)
+            log_debug("{} is a primary", RSC_INST)
             # Check lsn diff with current slaves if any
-            if OCF_ACTION == 'monitor':
+            if OCF_ACTION == "monitor":
                 check_locations()
             return OCF_RUNNING_MASTER
         # This should not happen, raise a hard configuration error.
-        log_err('confirm_role: unexpected result from query to check if "{}" '
-                'is a primary or a secondary: "{}"', RSC_INST, is_in_recovery)
+        log_err("unexpected result from query to check if {}\" "
+                "is a primary or a secondary: '{}'", RSC_INST, is_in_recovery)
         return OCF_ERR_CONFIGURED
     elif rc in (1, 2):
         # psql cound not connect to the instance.
         # As pg_isready reported the instance was listening, this error
         # could be a max_connection saturation. Just report a soft error.
-        log_err('confirm_role: psql can\'t connect to "{}"', RSC_INST)
+        log_err("psql can't connect to {}", RSC_INST)
         return OCF_ERR_GENERIC
     # The query failed (rc: 3) or bad parameters (rc: -1).
     # This should not happen, raise a hard configuration error.
-    log_err('confirm_role: the query to check if instance "{}" is a primary '
-            'or a secondary failed (rc: {})', RSC_INST, rc)
+    log_err("query to check if {} is a primary or secondary failed (rc: {})",
+            RSC_INST, rc)
     return OCF_ERR_CONFIGURED
 
 
@@ -589,12 +485,11 @@ def confirm_role():
 # WARNING: the status is NOT updated in case of crash.
 def get_pg_cluster_state():
     datadir = get_pgdata()
-    finds = RE_PG_CLUSTER_STATE.findall(run_pgctrldata())
+    finds = re.findall(RE_PG_CLUSTER_STATE, run_pgctrldata(), re.M)
     if not finds:
-        log_crit('get_pg_cluster_state: could not read state from controldata '
-                 'file for "{}"', datadir)
+        log_crit("couldn't read state from controldata file for {}", datadir)
         sys.exit(OCF_ERR_CONFIGURED)
-    log_debug('get_pg_cluster_state: state of {} is "{}"', RSC_INST, finds[0])
+    log_debug("state of {} is '{}'", RSC_INST, finds[0])
     return finds[0]
 
 
@@ -605,29 +500,27 @@ def get_pg_cluster_state():
 def get_ocf_status():
     while True:
         state = get_pg_cluster_state()
-        if state == '':
+        if state == "":
             # Something went really wrong with pg_controldata.
             log_err("get_ocf_status: no PG cluster state for {}", RSC_INST)
             sys.exit(OCF_ERR_INSTALLED)
-        # Instance should be running as a primary.
         if state == "in production":
-            return OCF_RUNNING_MASTER
-        # Instance should be running as a secondary.
+            return OCF_RUNNING_MASTER  # is a master
         # This state includes warm standby (rejects connections attempts,
         # including pg_isready)
         if state == "in archive recovery":
-            return OCF_SUCCESS
+            return OCF_SUCCESS  # is a slave
         # The instance should be stopped.
         # We don't care if it was a primary or secondary before, because we
         # always start instances as secondaries, and then promote if necessary.
         if state in ("shut down", "shut down in recovery"):
-            return OCF_NOT_RUNNING
+            return OCF_NOT_RUNNING  # is stopped
         # The state is "in crash recovery", "starting up" or "shutting down".
         # This state should be transitional, so we wait and loop to check if
         # it changes.
         # If it does not, pacemaker will eventually abort with a timeout.
-        log_debug('get_ocf_status: waiting for '
-                  'transitionnal state "{}" to finish', state)
+        log_debug("get_ocf_status: waiting for "
+                  "transitionnal state '{}' to change", state)
         sleep(1)
 
 
@@ -635,23 +528,24 @@ def get_ocf_status():
 # WARNING: doesn't distinguish a missing postmaster.pid from a process that is
 # still alive. This is fine: monitor will find this to be a hard error.
 def pg_ctl_status():
-    rc = as_postgres([get_pgctl(), 'status', '-D', get_pgdata()])
+    rc = as_postgres([get_pgctl(), "status", "-D", get_pgdata()])
     # pg_ctl status exits with 3 when postmaster.pid does not exist or the process
-    # with the PID is not alive (otherwise it returns 0)s
+    # with the PID is not alive (otherwise it returns 0)
     return rc
 
 
-# Start the local instance using pg_ctl
 def pg_ctl_start():
     # insanely long timeout to ensure Pacemaker gives up first
-    cmd = [get_pgctl(), 'start', '-D', get_pgdata(), '-w', '-t', 1000000,
-           '-o', "-c config_file=" + get_postgresql_conf()]
+    conf = os.environ.get(
+        "OCF_RESKEY_pgconf", os.path.join(get_pgdata(), "postgresql.conf"))
+    cmd = [get_pgctl(), "start", "-D", get_pgdata(), "-w", "-t", 1000000,
+           "-o", "-c config_file=" + conf]
     return as_postgres(cmd)
 
 
 def pg_ctl_stop():
-    return as_postgres([get_pgctl(), 'stop', '-D', get_pgdata(),
-                        '-w', '-t', 1000000, '-m', 'fast'])
+    return as_postgres([get_pgctl(), "stop", "-D", get_pgdata(),
+                        "-w", "-t", 1000000, "-m", "fast"])
 
 
 # Confirm PG is really stopped as pgisready stated
@@ -662,117 +556,39 @@ def confirm_stopped():
     if pgctlstatus_rc == 0:
         # The PID file exists and the process is available.
         # That should not be the case, return an error.
-        log_err('confirm_stopped: instance "{}" is not listening, but the '
-                'process referenced in postmaster.pid exists', RSC_INST)
+        log_err("{} is not listening, but the process in postmaster.pid exists",
+                RSC_INST)
         return OCF_ERR_GENERIC
     # The PID file does not exist or the process is not available.
-    log_debug('confirm_stopped: no postmaster process found for instance "{}"',
-              RSC_INST)
-    if os.path.isfile(get_pgdata() + "/backup_label"):
-        # We are probably on a freshly built secondary that was not started yet.
-        log_debug('confirm_stopped: backup_label file exists: probably '
-                  'on a never started secondary')
+    log_debug("no postmaster process found for {}", RSC_INST)
+    backup_lbl = os.path.join(get_pgdata(), "backup_label")
+    if os.path.isfile(backup_lbl):
+        log_debug("found {}: probably a never started secondary", backup_lbl)
         return OCF_NOT_RUNNING
     # Continue the check with pg_controldata.
     controldata_rc = get_ocf_status()
     if controldata_rc == OCF_RUNNING_MASTER:
         # The controldata has not been updated to "shutdown".
         # It should mean we had a crash on a primary instance.
-        log_err(
-            'confirm_stopped: instance "{}" controldata indicates a running '
-            'primary instance, the instance has probably crashed', RSC_INST)
+        log_err("{}'s controldata indicates a running "
+                "primary, the instance has probably crashed", RSC_INST)
         return OCF_FAILED_MASTER
     elif controldata_rc == OCF_SUCCESS:
         # The controldata has not been updated to "shutdown in recovery".
         # It should mean we had a crash on a secondary instance.
         # There is no "FAILED_SLAVE" return code, so we return a generic error.
-        log_err('confirm_stopped: "{}" appears to be a running secondary, the '
-                'instance has probably crashed', RSC_INST)
+        log_err("{} appears to be a running secondary, it has probably crashed",
+                RSC_INST)
         return OCF_ERR_GENERIC
     elif controldata_rc == OCF_NOT_RUNNING:
         # The controldata state is consistent, the instance was probably
         # propertly shut down.
-        log_debug('confirm_stopped: instance "{}" controldata indicates '
-                  'that the instance was propertly shut down', RSC_INST)
+        log_debug("{}'s controldata indicates "
+                  "that the instance was propertly shut down", RSC_INST)
         return OCF_NOT_RUNNING
     # Something went wrong with the controldata check.
-    log_err('confirm_stopped: could not get instance "{}" status from '
-            'controldata (returned: {})', RSC_INST, controldata_rc)
-    return OCF_ERR_GENERIC
-
-
-# Monitor the PostgreSQL instance
-def ocf_monitor():
-    # First check, verify if the instance is listening.
-    pgisready_rc = run_pgisready()
-    if pgisready_rc == 0:
-        # The instance is listening.
-        # The instance is up and return if it is a primary or a secondary
-        log_debug('ocf_monitor: instance "{}" is listening', RSC_INST)
-        return confirm_role()
-    if pgisready_rc == 1:
-        # The attempt was rejected.
-        # This could happen in several cases:
-        #   - at startup
-        #   - during shutdown
-        #   - during crash recovery
-        #   - if instance is a warm standby
-        # Except for the warm standby case, this should be a transitional state.
-        # We try to confirm using pg_controldata.
-        log_debug('ocf_monitor: instance "{}" rejects connections - '
-                  'checking again...', RSC_INST)
-        controldata_rc = get_ocf_status()
-        if controldata_rc in (OCF_RUNNING_MASTER, OCF_SUCCESS):
-            # This state indicates that pg_isready check should succeed.
-            # We check again.
-            log_debug('ocf_monitor: instance "{}" controldata shows a '
-                      'running status', RSC_INST)
-            pgisready_rc = run_pgisready()
-            if pgisready_rc == 0:
-                # Consistent with pg_controdata output.
-                # We can check if the instance is primary or secondary
-                log_debug('ocf_monitor: instance "{}" is listening', RSC_INST)
-                return confirm_role()
-            # Still not consistent, raise an error.
-            # NOTE: if the instance is a warm standby, we end here.
-            # TODO raise an hard error here ?
-            log_err('ocf_monitor: controldata of "{}"  is not consistent '
-                    'with pg_isready (returned: {})', RSC_INST, pgisready_rc)
-            log_info('ocf_monitor: if this instance is in warm standby, '
-                     'this resource agent only supports hot standby')
-            return OCF_ERR_GENERIC
-        if controldata_rc == OCF_NOT_RUNNING:
-            # This state indicates that pg_isready check should fail with rc 2.
-            # We check again.
-            pgisready_rc = run_pgisready()
-            if pgisready_rc == 2:
-                # Consistent with pg_controdata output.
-                # We check the process status using pg_ctl status and check
-                # if it was propertly shut down using pg_controldata.
-                log_debug('ocf_monitor: "{}" is not listening', RSC_INST)
-                return confirm_stopped()
-            # Still not consistent, raise an error.
-            # TODO raise an hard error here ?
-            log_err('ocf_monitor: controldata of "{}" is not consistent '
-                    'with pg_isready (returned: {})', RSC_INST, pgisready_rc)
-            return OCF_ERR_GENERIC
-        # Something went wrong with the controldata check, hard fail.
-        log_err('ocf_monitor: could not get instance "{}" status from '
-                'controldata (returned: {})', RSC_INST, controldata_rc)
-        return OCF_ERR_INSTALLED
-    elif pgisready_rc == 2:
-        # The instance is not listening.
-        # We check the process status using pg_ctl status and check
-        # if it was propertly shut down using pg_controldata.
-        log_debug('ocf_monitor: instance "{}" is not listening', RSC_INST)
-        return confirm_stopped()
-    elif pgisready_rc == 3:
-        # No attempt was done, probably a syntax error.
-        # Hard configuration error, we don't want to retry or failover here.
-        log_err('ocf_monitor: unknown error while checking if "{}" '
-                'is listening (returned {})', RSC_INST, pgisready_rc)
-        return OCF_ERR_CONFIGURED
-    log_err('ocf_monitor: unexpected pg_isready status for "{}"', RSC_INST)
+    log_err("couldn't get {}'s status from controldata (returned {})",
+            RSC_INST, controldata_rc)
     return OCF_ERR_GENERIC
 
 
@@ -786,8 +602,8 @@ def create_recovery_conf():
     uid, gid = u.pw_uid, u.pw_gid
     recovery_file = os.path.join(get_pgdata(), "recovery.conf")
     recovery_tpl = get_recovery_pcmk()
-    log_debug('create_recovery_conf: get replication configuration from '
-              'the template file "{}"', recovery_tpl)
+    log_debug("get replication configuration from "
+              "the template file {}", recovery_tpl)
     # Create the recovery.conf file to start the instance as a secondary.
     # NOTE: the recovery.conf is supposed to be set up so the secondary can
     # connect to the primary instance, usually using a virtual IP address.
@@ -801,20 +617,20 @@ def create_recovery_conf():
             # Copy all parameters from the template file
             recovery_conf = fh.read()
     except:
-        log_crit("create_recovery_conf: can't open {}", recovery_tpl)
+        log_crit("can't open {}", recovery_tpl)
         sys.exit(OCF_ERR_CONFIGURED)
-    log_debug('create_recovery_conf: writing "{}"', recovery_file)
+    log_debug("writing {}", recovery_file)
     try:
         # Write recovery.conf using configuration from the template file
         with open(recovery_file, "w") as fh:
             fh.write(recovery_conf)
     except:
-        log_crit("create_recovery_conf: can't open {}", recovery_file)
+        log_crit("can't open {}", recovery_file)
         sys.exit(OCF_ERR_CONFIGURED)
     try:
         os.chown(recovery_file, uid, gid)
     except:
-        log_crit("create_recovery_conf: can't set owner of {}", recovery_file)
+        log_crit("can't set owner of {}", recovery_file)
         sys.exit(OCF_ERR_CONFIGURED)
 
 
@@ -826,7 +642,7 @@ def get_master_score(node=None):
     try:
         score = check_output(" ".join(cmd), shell=True)
     except CalledProcessError:
-        return ''
+        return ""
     return score.strip()
 
 
@@ -854,116 +670,43 @@ def set_master_score(score, node=None):
         tmp = get_master_score(node)
         if tmp == score:
             break
-        log_debug('set_master_score: waiting to set score to {} '
-                  '(currently {})...', score, tmp)
+        log_debug("waiting to set score to {} (currently {})...", score, tmp)
         sleep(0.1)
 
 
-# Start the PostgreSQL instance as a *secondary*
-def ocf_start():
-    rc = ocf_monitor()
-    prev_state = get_pg_cluster_state()
-    # Instance must be running as secondary or being stopped.
-    # Anything else is an error.
-    if rc == OCF_SUCCESS:
-        log_info('ocf_start: {} is already started', RSC_INST)
-        return OCF_SUCCESS
-    elif rc != OCF_NOT_RUNNING:
-        log_err('ocf_start: unexpected state for {} (returned {})', RSC_INST, rc)
-        return OCF_ERR_GENERIC
-    #
-    # From here, the instance is NOT running for sure.
-    #
-    log_debug('ocf_start: {} is stopped, starting it as a secondary', RSC_INST)
-    # Create recovery.conf from the template file.
-    create_recovery_conf()
-    # Start the instance as a secondary.
-    rc = pg_ctl_start()
-    if rc == 0:
-        # Wait for the start to finish.
-        while True:
-            rc = ocf_monitor()
-            if rc != OCF_NOT_RUNNING:
-                break
-            sleep(1)
-        if rc == OCF_SUCCESS:
-            log_info('ocf_start: {} started', RSC_INST)
-            # Check if a master score exists in the cluster.
-            # During the first cluster start, no master score will exist on any
-            # of the slaves, unless an admin designated one using crm_master.
-            # If no master exists the cluster won't promote one from the slaves.
-            # To solve this, we check if there is at least one master
-            # score existing on one node. Do nothing if at least one master
-            # score is found in the clones of the resource. If no master score
-            # exists, set a score of 1 only if the resource was a
-            # master shut down before the start.
-            if prev_state == "shut down" and not _master_score_exists():
-                log_info('ocf_start: no master score around; set mine to 1')
-                set_master_score('1')
-            return OCF_SUCCESS
-        log_err('ocf_start: {} is not running as a slave (returned {})',
-                RSC_INST, rc)
-        return OCF_ERR_GENERIC
-    log_err('ocf_start: {} failed to start (rc: {})', RSC_INST, rc)
-    return OCF_ERR_GENERIC
-
-
-# Stop the PostgreSQL instance
-def ocf_stop():
-    # Instance must be running as secondary or primary or being stopped.
-    # Anything else is an error.
-    rc = ocf_monitor()
-    if rc == OCF_NOT_RUNNING:
-        log_info('ocf_stop: {} already stopped', RSC_INST)
-        return OCF_SUCCESS
-    elif rc not in (OCF_SUCCESS, OCF_RUNNING_MASTER):
-        log_warn('ocf_stop: unexpected state for {} (returned {})', RSC_INST, rc)
-        return OCF_ERR_GENERIC
-    # From here, the instance is running for sure.
-    log_debug('ocf_stop: {} is running, stopping it', RSC_INST)
-    # Try to quit with proper shutdown.
-    # insanely long timeout to ensure Pacemaker gives up first
-    if pg_ctl_stop() == 0:
-        log_info('ocf_stop: {} stopped', RSC_INST)
-        return OCF_SUCCESS
-    log_err('ocf_stop: {} failed to stop', RSC_INST)
-    return OCF_ERR_GENERIC
-
-
-# Promote the secondary instance to primary
 def ocf_promote():
     nodename = get_ocf_nodename()
     rc = ocf_monitor()
     if rc == OCF_SUCCESS:
         # Running as slave. Normal, expected behavior.
-        log_debug('ocf_promote: {} running as a standby', RSC_INST)
+        log_debug("{} running as a standby", RSC_INST)
     elif rc == OCF_RUNNING_MASTER:
         # Already a master. Unexpected, but not a problem.
-        log_info('ocf_promote: {} running as a primary', RSC_INST)
+        log_info("{} running as a primary", RSC_INST)
         return OCF_SUCCESS
     elif rc == OCF_NOT_RUNNING:  # INFO this is not supposed to happen.
         # Currently not running. Need to start before promoting.
-        log_info('ocf_promote: {} stopped, starting it', RSC_INST)
+        log_info("{} stopped, starting it", RSC_INST)
         rc = ocf_start()
         if rc != OCF_SUCCESS:
-            log_err('ocf_promote: failed to start {}', RSC_INST)
+            log_err("failed to start {}", RSC_INST)
             return OCF_ERR_GENERIC
     else:
-        log_info('ocf_promote: unexpected error, cannot promote {}', RSC_INST)
+        log_info("unexpected error, cannot promote {}", RSC_INST)
         return OCF_ERR_GENERIC
     #
     # At this point, the instance **MUST** be started as a secondary.
     #
     # Cancel the switchover if it has been considered unsafe during pre-promote
-    if get_ha_private_attr('cancel_switchover') == '1':
-        log_err('ocf_promote: switch from pre-promote action canceled ')
-        del_ha_private_attr('cancel_switchover')
+    if get_ha_private_attr("cancel_switchover") == "1":
+        log_err("switch from pre-promote action canceled")
+        del_ha_private_attr("cancel_switchover")
         return OCF_ERR_GENERIC
     # Do not check for a better candidate if we try to recover the master
     # Recovery of a master is detected during pre-promote. It sets the
     # private attribute 'recover_master' to '1' if this is a master recovery.
-    if get_ha_private_attr('recover_master') == '1':
-        log_info('ocf_promote: recovering old master, no election needed')
+    if get_ha_private_attr("recover_master") == "1":
+        log_info("recovering old master, no election needed")
     else:
         # The promotion is occurring on the best known candidate (highest
         # master score), as chosen by pacemaker during the last working monitor
@@ -976,27 +719,25 @@ def ocf_promote():
         # The best standby to promote has the highest LSN. If the
         # current resource is not the best one, we need to modify the master
         # scores accordingly, and abort the current promotion.
-        log_debug('ocf_promote: checking if current node is the best '
-                  'candidate for promotion')
+        log_debug("checking if current node is the best for promotion")
         # Exclude nodes that are known to be unavailable (not in the current
         # partition) using the "crm_node" command
-        active_nodes = get_ha_private_attr('nodes').split()
-        node_to_promote = ''
+        active_nodes = get_ha_private_attr("nodes").split()
+        node_to_promote = ""
         # Get the lsn_location attribute value of the current node, as set
         # during the "pre-promote" action.
         # It should be the greatest among the secondary instances.
-        max_lsn = get_ha_private_attr('lsn_location')
-        if max_lsn == '':
+        max_lsn = get_ha_private_attr("lsn_location")
+        if max_lsn == "":
             # Should not happen since the "lsn_location" attribute should have
             # been updated during pre-promote.
-            log_crit('ocf_promote: can not get current node LSN location')
+            log_crit("can not get current node LSN location")
             return OCF_ERR_GENERIC
         # convert location to decimal
         max_lsn = max_lsn.strip("\n")
-        wal_num, wal_off = max_lsn.split('/')
+        wal_num, wal_off = max_lsn.split("/")
         max_lsn_dec = (294967296 * int(wal_num, 16)) + int(wal_off, 16)
-        log_debug('ocf_promote: current node lsn location: {}({})',
-                  max_lsn, max_lsn_dec)
+        log_debug("current node lsn location: {}({})", max_lsn, max_lsn_dec)
         # Now we compare with the other available nodes.
         for node in active_nodes:
             # We exclude the current node from the check.
@@ -1004,17 +745,17 @@ def ocf_promote():
                 continue
             # Get the "lsn_location" attribute value for the node, as set during
             # the "pre-promote" action.
-            node_lsn = get_ha_private_attr('lsn_location', node)
-            if node_lsn == '':
+            node_lsn = get_ha_private_attr("lsn_location", node)
+            if node_lsn == "":
                 # This should not happen as the "lsn_location" attribute should
                 # have been updated during the "pre-promote" action.
-                log_crit('ocf_promote: can not get LSN location of {}', node)
+                log_crit("can't get LSN location of {}", node)
                 return OCF_ERR_GENERIC
             # convert location to decimal
-            node_lsn = node_lsn.strip('\n')
-            wal_num, wal_off = node_lsn.split('/')
+            node_lsn = node_lsn.strip("\n")
+            wal_num, wal_off = node_lsn.split("/")
             node_lsn_dec = (4294967296 * int(wal_num, 16)) + int(wal_off, 16)
-            log_debug('ocf_promote: comparing with {}: lsn is {}({})',
+            log_debug("comparing with {}: lsn is {}({})",
                       node, node_lsn, node_lsn_dec)
             # If the node has a bigger delta, select it as a best candidate to
             # promotion.
@@ -1022,97 +763,33 @@ def ocf_promote():
                 node_to_promote = node
                 max_lsn_dec = node_lsn_dec
                 # max_lsn = node_lsn
-                log_debug('ocf_promote: found {} as a better candidate to '
-                          'promote', node)
+                log_debug("found {} as a better candidate to promote", node)
         # If any node has been selected, we adapt the master scores accordingly
         # and break the current promotion.
-        if node_to_promote != '':
-            log_info('ocf_promote: {} is the best candidate to promote, '
-                     'aborting current promotion', node_to_promote)
+        if node_to_promote != "":
+            log_info("{} is the best candidate to promote, "
+                     "aborting current promotion", node_to_promote)
             # Reset current node master score.
-            set_master_score('1')
+            set_master_score("1")
             # Set promotion candidate master score.
-            set_master_score('1000', node_to_promote)
+            set_master_score("1000", node_to_promote)
             # We fail the promotion to trigger another promotion transition
             # with the new scores.
             return OCF_ERR_GENERIC
             # Else, we will keep on promoting the current node.
-    if as_postgres([get_pgctl(), 'promote', '-D', get_pgdata(), '-w', ]) != 0:
+    if as_postgres([get_pgctl(), "promote", "-D", get_pgdata(), "-w", ]) != 0:
         # Promote the instance on the current node.
-        log_err('ocf_promote: error during promotion')
+        log_err("error during promotion")
         return OCF_ERR_GENERIC
     # promote is asynchronous: wait for it to finish
     while ocf_monitor() != OCF_RUNNING_MASTER:
-        log_debug('ocf_promote: waiting for promote to complete')
+        log_debug("waiting for promote to complete")
         sleep(1)
-    log_info('ocf_promote: promote complete')
+    log_info("promote complete")
     return OCF_SUCCESS
 
 
-# Demote the PostgreSQL instance from primary to secondary
-# To demote a PostgreSQL instance, we must:
-#   * stop it gracefully
-#   * create recovery.conf with standby_mode = on
-#   * start it back
-def ocf_demote():
-    rc = ocf_monitor()
-    # Running as primary. Normal, expected behavior.
-    if rc == OCF_RUNNING_MASTER:
-        log_debug('ocf_demote: {} running as a primary', RSC_INST)
-    elif rc == OCF_SUCCESS:
-        # Already running as secondary. Nothing to do.
-        log_debug('ocf_demote: {} running as a secondary', RSC_INST)
-        return OCF_SUCCESS
-    elif rc == OCF_NOT_RUNNING:
-        # Instance is stopped. Nothing to do.
-        log_debug('ocf_demote: {} stopped', RSC_INST)
-    elif rc == OCF_ERR_CONFIGURED:
-        # We actually prefer raising a hard or fatal error instead of leaving
-        # the CRM abording its transition for a new one because of a soft error.
-        # The hard error will force the CRM to move the resource immediately.
-        return OCF_ERR_CONFIGURED
-    else:
-        return OCF_ERR_GENERIC
-    # TODO we need to make sure at least one slave is connected!!
-    # WARNING if the resource state is stopped instead of master, the ocf ra dev
-    # rsc advises to return OCF_ERR_GENERIC, misleading the CRM in a loop where
-    # it computes transitions of demote(failing)->stop->start->promote actions
-    # until failcount == migration-threshold.
-    # This is a really ugly trick to keep going with the demode action if the
-    # rsc is already stopped gracefully.
-    # See discussion "CRM trying to demote a stopped resource" on
-    # developers@clusterlabs.org
-    if rc != OCF_NOT_RUNNING:
-        # insanely long timeout to ensure Pacemaker gives up firt
-        rc = pg_ctl_stop()
-        if rc != 0:
-            log_err('ocf_demote: failed to stop {} (pg_ctl exited with {})',
-                    RSC_INST, rc)
-            return OCF_ERR_GENERIC
-        # Double check that the instance is stopped correctly.
-        rc = ocf_monitor()
-        if rc != OCF_NOT_RUNNING:
-            log_err('ocf_demote: unexpected "{}" state: monitor status '
-                    '({}) disagree with pg_ctl return code', RSC_INST, rc)
-            return OCF_ERR_GENERIC
-    #
-    # At this point, the instance **MUST** be stopped gracefully.
-    #
-    # Note: We do not need to handle the recovery.conf file here as ocf_start
-    # deal with that itself. Equally, no need to wait for the start to complete
-    # here, handled in ocf_start.
-    rc = ocf_start()
-    if rc == OCF_SUCCESS:
-        log_info('ocf_demote: {} started as a secondary', RSC_INST)
-        return OCF_SUCCESS
-    # NOTE: No need to double check the instance state as ocf_start already use
-    # ocf_monitor to check the state before returning.
-    log_err('ocf_demote: failed to start {} as standby (returned {})',
-            RSC_INST, rc)
-    return OCF_ERR_GENERIC
-
-
-# Check if the current transiation is a recover of a master clone on given node.
+# Check if the current transition is a recover of a master clone on given node.
 def is_master_recover(n):
     nodes = notify_dict["nodes"]
     return n in nodes["master"] and n in nodes["promote"]
@@ -1126,17 +803,17 @@ def is_slave_recover(n):
 
 # check if th current transition is a switchover to the given node.
 def is_switchover(n):
-    nodes = notify_dict['nodes']
+    nodes = notify_dict["nodes"]
     old = None
     if nodes["master"]:
         old = nodes["master"][0]
     if (len(nodes["master"]) != 1 or
             len(nodes["demote"]) != 1 or len(nodes["promote"]) != 1):
         return False
-    t1 = old in nodes['demote']
-    t4 = old in nodes['stop']
-    t2 = n in nodes['slave']
-    t3 = n in nodes['promote']
+    t1 = old in nodes["demote"]
+    t4 = old in nodes["stop"]
+    t2 = n in nodes["slave"]
+    t3 = n in nodes["promote"]
     return t1 and t2 and t3 and not t4
 
 
@@ -1151,9 +828,8 @@ def is_switchover(n):
 # Returns 1 if swithcover is not safe
 # Returns 2 for internal error
 def check_switchover():
-    log_info('check_switchover: switch from "{}" to "{}" in progress. '
-             'Need to check the last record in WAL',
-             notify_dict['nodes']['demote'][0], get_ocf_nodename())
+    log_info("switch from {} to {} in progress, checking last record in WAL",
+             notify_dict["nodes"]["demote"][0], get_ocf_nodename())
     # Force a checpoint to make sure the controldata shows the very last TL
     pg_execute("CHECKPOINT")
     # check if we received the shutdown checkpoint of the master during its
@@ -1176,16 +852,13 @@ def check_switchover():
     #  0/4000000
     rc, rs = pg_execute("SELECT pg_last_xlog_receive_location()")
     if rc != 0:
-        log_err('check_switchover: could not query '
-                'last_xlog_receive_location ({})', rc)
+        log_err("could not query last_xlog_receive_location ({})", rc)
         return 2
     last_lsn = rs[0][0] if rs and rs[0] else None
     if not (tl and last_chk and last_lsn):
-        log_crit('check_switchover: could not read last '
-                 'checkpoint and timeline from controldata file!')
-        log_debug('check_switchover: XLOGDUMP parameters: '
-                  'datadir: "{}", last_chk: {}, tl: {}, mast_lsn: {}',
-                  datadir, last_chk, tl, last_lsn)
+        log_crit("couldn't read last checkpoint or timeline from controldata")
+        log_debug("XLOGDUMP parameters:  datadir: {}, last_chk: {}, tl: {}, "
+                  "mast_lsn: {}", datadir, last_chk, tl, last_lsn)
         return 2
     # force checkpoint on the slave to flush the master's
     # shutdown checkpoint to WAL
@@ -1197,43 +870,39 @@ def check_switchover():
     except CalledProcessError as e:
         rc = e.returncode
         ans = e.output
-    log_debug(
-        'check_switchover: XLOGDUMP rc: {}, tl: {}, last_chk: {}, '
-        'last_lsn: {}, output: "{}"', rc, tl, last_chk, last_lsn, ans)
+    log_debug("XLOGDUMP rc: {}, tl: {}, last_chk: {}, last_lsn: {}, "
+              "output: [{}]", rc, tl, last_chk, last_lsn, ans)
     p = re.compile(
         r"^rmgr: XLOG.*desc: [cC][hH][eE][cC][kK][pP][oO][iI][nN][tT]"
         r"(:|_SHUTDOWN) redo [0-9A-F/]+; tli " + tl + r";.*; shutdown$",
         re.M | re.DOTALL)
     if rc == 0 and p.search(ans):
-        log_info(
-            'check_switchover: slave received the shutdown checkpoint',
-            get_pg_cluster_state())
+        log_info("slave received shutdown checkpoint", get_pg_cluster_state())
         return 0
-    set_ha_private_attr('cancel_switchover', '1')
-    log_info('ocf_notify: did not received the shutdown checkpoint from '
-             'the old master!')
+    set_ha_private_attr("cancel_switchover", "1")
+    log_info("did not received shutdown checkpoint from old master")
     return 1
 
 
 def notify_pre_promote():
     node = get_ocf_nodename()
     nodes = notify_dict["nodes"]
-    promoting = nodes['promote'][0]
-    log_info('ocf_notify: promoting instance on {}', promoting)
+    promoting = nodes["promote"][0]
+    log_info("pre_promote: promoting instance on {}", promoting)
     # No need to do an election between slaves if this is recovery of the master
     if is_master_recover(promoting):
-        log_warn('ocf_notify: This is a master recovery!')
+        log_warn("pre_promote: this is a master recovery")
         if promoting == node:
-            set_ha_private_attr('recover_master', '1')
+            set_ha_private_attr("recover_master", "1")
         return OCF_SUCCESS
     # Environment cleanup!
-    del_ha_private_attr('lsn_location')
-    del_ha_private_attr('recover_master')
-    del_ha_private_attr('nodes')
-    del_ha_private_attr('cancel_switchover')
+    del_ha_private_attr("lsn_location")
+    del_ha_private_attr("recover_master")
+    del_ha_private_attr("nodes")
+    del_ha_private_attr("cancel_switchover")
     # check for the last received entry of WAL from the master if we are
     # the designated slave to promote
-    if is_switchover(node) and node in nodes['promote']:
+    if is_switchover(node) and node in nodes["promote"]:
         rc = check_switchover()
         if rc == 1:
             # Shortcut the election process because the switchover will be
@@ -1256,17 +925,17 @@ def notify_pre_promote():
     # information to check if the instance to be promoted is the best one,
     # so we can avoid a race condition between the last successful monitor
     # on the previous master and the current promotion.
-    rc, rs = pg_execute('SELECT pg_last_xlog_receive_location()')
+    rc, rs = pg_execute("SELECT pg_last_xlog_receive_location()")
     if rc != 0:
-        log_warn('ocf_notify: could not query the current node LSN')
+        log_warn("pre_promote: could not query the current node LSN")
         # Return code are ignored during notifications...
         return OCF_SUCCESS
     node_lsn = rs[0][0]
-    log_info('ocf_notify: current node LSN: {}', node_lsn)
+    log_info("pre_promote: current node LSN: {}", node_lsn)
     # Set the "lsn_location" attribute value for this node so we can use it
     # during the following "promote" action.
-    if not set_ha_private_attr('lsn_location', node_lsn):
-        log_warn('ocf_notify: could not set the current node LSN')
+    if not set_ha_private_attr("lsn_location", node_lsn):
+        log_warn("pre_promote: could not set the current node LSN")
     # If this node is the future master, keep track of the slaves that
     # received the same notification to compare our LSN with them during
     # promotion
@@ -1274,25 +943,21 @@ def notify_pre_promote():
     if promoting == node:
         # build the list of active nodes:
         #   master + slave + start - stop
-        for uname in nodes['master']:
+        for uname in chain(nodes["master"], nodes["slave"], nodes["start"]):
             active_nodes[uname] += 1
-        for uname in nodes['slave']:
-            active_nodes[uname] += 1
-        for uname in nodes['start']:
-            active_nodes[uname] += 1
-        for uname in nodes['stop']:
+        for uname in nodes["stop"]:
             active_nodes[uname] -= 1
         attr_nodes = " ".join(k for k in active_nodes if active_nodes[k] > 0)
-        set_ha_private_attr('nodes', attr_nodes)
+        set_ha_private_attr("nodes", attr_nodes)
     return OCF_SUCCESS
 
 
 def notify_post_promote():
     # We have a new master (or the previous one recovered).
-    del_ha_private_attr('lsn_location')
-    del_ha_private_attr('recover_master')
-    del_ha_private_attr('nodes')
-    del_ha_private_attr('cancel_switchover')
+    del_ha_private_attr("lsn_location")
+    del_ha_private_attr("recover_master")
+    del_ha_private_attr("nodes")
+    del_ha_private_attr("cancel_switchover")
     return OCF_SUCCESS
 
 
@@ -1318,12 +983,12 @@ def notify_pre_demote():
     # To avoid this, we try to start the instance in recovery from here.
     # If it success, at least it will be demoted correctly with a normal
     # status. If it fails, it will be catched up in next steps.
-    log_info('notify_pre_demote: trying to start failing master {}', RSC_INST)
+    log_info("pre_demote: trying to start failing master {}", RSC_INST)
     # Either the instance managed to start or it couldn't.
     # We rely on the pg_ctk '-w' switch to take care of this. If it couldn't
     # start, this error will be catched up later during the various checks
     pg_ctl_start()
-    log_info('notify_pre_demote: state is "{}" after recovery attempt',
+    log_info("pre_demote: state is '{}' after recovery attempt",
              get_pg_cluster_state())
     return OCF_SUCCESS
 
@@ -1347,23 +1012,290 @@ def notify_pre_stop():
     # To avoid this, we try to start the instance in recovery from here.
     # If it succeeds, at least it will be stopped correctly with a normal
     # status. If it fails, it will be catched up in next steps.
-    log_info('notify_pre_stop: trying to start failing slave {}', RSC_INST)
+    log_info("pre_stop: trying to start failing slave {}", RSC_INST)
     # Either the instance managed to start or it couldn't.
     # We rely on the pg_ctl '-w' switch to take care of this. If it couldn't
     # start, this error will be catched up later during the various checks
     pg_ctl_start()
-    log_info('notify_pre_stop: state is "{}" after recovery attempt',
+    log_info("pre_stop: state is '{}' after recovery attempt",
              get_pg_cluster_state())
     return OCF_SUCCESS
 
 
-# Notify type actions, called on all available nodes before (pre) and after
-# (post) other actions, like promote, start, ...
+def ocf_validate_all():
+    for prog in [get_pgctl(), get_psql(), get_pgisready(), get_pgctrldata()]:
+        if not os.access(prog, os.X_OK):
+            log_crit("{} is missing or not executable", prog)
+            sys.exit(OCF_ERR_INSTALLED)
+    datadir = get_pgdata()
+    if not os.path.isdir(datadir):
+        log_err("PGDATA {} not found".format(datadir))
+        sys.exit(OCF_ERR_ARGS)
+    # check PG_VERSION
+    pgver_file = os.path.join(datadir, "PG_VERSION")
+    try:
+        with open(pgver_file) as fh:
+            ver = fh.read()
+    except Exception as e:
+        log_crit("Can't read PG version file: {}", pgver_file, e)
+        sys.exit(OCF_ERR_ARGS)
+    try:
+        ver = StrictVersion(ver)
+    except:
+        log_crit("Can't parse PG version: {}", ver)
+        sys.exit(OCF_ERR_ARGS)
+    if ver < MIN_PG_VER:
+        log_err("PostgreSQL {} is too old: >= {} required", ver, MIN_PG_VER)
+        sys.exit(OCF_ERR_INSTALLED)
+    # check recovery template
+    recovery_tpl = get_recovery_pcmk()
+    if not os.path.isfile(recovery_tpl):
+        log_crit("Recovery template {} not found".format(recovery_tpl))
+        sys.exit(OCF_ERR_ARGS)
+    try:
+        with open(recovery_tpl) as f:
+            content = f.read()
+    except:
+        log_crit("Could not open or read file {}".format(recovery_tpl))
+        sys.exit(OCF_ERR_ARGS)
+    if not re.search(RE_STANDBY_MODE, content, re.M):
+        log_crit(
+            "Recovery template file {} must contain 'standby_mode = on'",
+            recovery_tpl)
+        sys.exit(OCF_ERR_ARGS)
+    if not re.search(RE_TPL_TIMELINE, content, re.M):
+        log_crit("Recovery template lacks 'recovery_target_timeline = latest'")
+        sys.exit(OCF_ERR_ARGS)
+    m = re.findall(RE_APP_NAME, content, re.M)
+    if not m or not m[0].startswith(get_ocf_nodename()):
+        log_crit("Recovery template lacks application_name={} in "
+                 "primary_conninfo", get_ocf_nodename())
+        sys.exit(OCF_ERR_ARGS)
+    # check system user
+    try:
+        pwd.getpwnam(get_pguser())
+    except KeyError:
+        log_crit("System user {} does not exist", get_pguser())
+        sys.exit(OCF_ERR_ARGS)
+    # require wal_level >= hot_standby
+    finds = re.findall(RE_WAL_LEVEL, run_pgctrldata(), re.M)
+    if not finds:
+        log_crit("Could not read wal_level setting")
+        sys.exit(OCF_ERR_ARGS)
+    if finds[0] not in ("hot_standby", "logical", "replica"):
+        log_crit("wal_level must be hot_standby, logical or replica")
+        sys.exit(OCF_ERR_ARGS)
+    return OCF_SUCCESS
+
+
+# Start the PostgreSQL instance as a *secondary*
+def ocf_start():
+    rc = ocf_monitor()
+    prev_state = get_pg_cluster_state()
+    # Instance must be running as secondary or being stopped.
+    # Anything else is an error.
+    if rc == OCF_SUCCESS:
+        log_info("{} is already started", RSC_INST)
+        return OCF_SUCCESS
+    elif rc != OCF_NOT_RUNNING:
+        log_err("unexpected state for {} (returned {})", RSC_INST, rc)
+        return OCF_ERR_GENERIC
+    #
+    # From here, the instance is NOT running for sure.
+    #
+    log_debug("{} is stopped, starting it as a secondary", RSC_INST)
+    # Create recovery.conf from the template file.
+    create_recovery_conf()
+    # Start the instance as a secondary.
+    rc = pg_ctl_start()
+    if rc == 0:
+        # Wait for the start to finish.
+        while True:
+            rc = ocf_monitor()
+            if rc != OCF_NOT_RUNNING:
+                break
+            sleep(1)
+        if rc == OCF_SUCCESS:
+            log_info("{} started", RSC_INST)
+            # Check if a master score exists in the cluster.
+            # During the first cluster start, no master score will exist on any
+            # of the slaves, unless an admin designated one using crm_master.
+            # If no master exists the cluster won't promote one from the slaves.
+            # To solve this, we check if there is at least one master
+            # score existing on one node. Do nothing if at least one master
+            # score is found in the clones of the resource. If no master score
+            # exists, set a score of 1 only if the resource was a
+            # master shut down before the start.
+            if prev_state == "shut down" and not _master_score_exists():
+                log_info("no master score around; set mine to 1")
+                set_master_score("1")
+            return OCF_SUCCESS
+        log_err("{} is not running as a slave (returned {})", RSC_INST, rc)
+        return OCF_ERR_GENERIC
+    log_err("{} failed to start (rc: {})", RSC_INST, rc)
+    return OCF_ERR_GENERIC
+
+
+# Stop the PostgreSQL instance
+def ocf_stop():
+    # Instance must be running as secondary or primary or being stopped.
+    # Anything else is an error.
+    rc = ocf_monitor()
+    if rc == OCF_NOT_RUNNING:
+        log_info("{} already stopped", RSC_INST)
+        return OCF_SUCCESS
+    elif rc not in (OCF_SUCCESS, OCF_RUNNING_MASTER):
+        log_warn("unexpected state for {} (returned {})", RSC_INST, rc)
+        return OCF_ERR_GENERIC
+    # From here, the instance is running for sure.
+    log_debug("{} is running, stopping it", RSC_INST)
+    # Try to quit with proper shutdown.
+    # insanely long timeout to ensure Pacemaker gives up first
+    if pg_ctl_stop() == 0:
+        log_info("{} stopped", RSC_INST)
+        return OCF_SUCCESS
+    log_err("{} failed to stop", RSC_INST)
+    return OCF_ERR_GENERIC
+
+
+# Monitor the PostgreSQL instance
+def ocf_monitor():
+    # First check, verify if the instance is listening.
+    pgisready_rc = run_pgisready()
+    if pgisready_rc == 0:
+        # The instance is listening.
+        # The instance is up and return if it is a primary or a secondary
+        log_debug("{} is listening", RSC_INST)
+        return confirm_role()
+    if pgisready_rc == 1:
+        # The attempt was rejected.
+        # This could happen in several cases:
+        #   - at startup
+        #   - during shutdown
+        #   - during crash recovery
+        #   - if instance is a warm standby
+        # Except for the warm standby case, this should be a transitional state.
+        # We try to confirm using pg_controldata.
+        log_debug("{} rejects connections, checking again...", RSC_INST)
+        controldata_rc = get_ocf_status()
+        if controldata_rc in (OCF_RUNNING_MASTER, OCF_SUCCESS):
+            # This state indicates that pg_isready check should succeed.
+            # We check again.
+            log_debug("{}'s controldata shows a running status", RSC_INST)
+            pgisready_rc = run_pgisready()
+            if pgisready_rc == 0:
+                # Consistent with pg_controdata output.
+                # We can check if the instance is primary or secondary
+                log_debug("{} is listening", RSC_INST)
+                return confirm_role()
+            # Still not consistent, raise an error.
+            # NOTE: if the instance is a warm standby, we end here.
+            # TODO raise an hard error here ?
+            log_err("{}'s controldata is not consistent with pg_isready "
+                    "(returned: {})", RSC_INST, pgisready_rc)
+            log_info("if this instance is in warm standby, "
+                     "this resource agent only supports hot standby")
+            return OCF_ERR_GENERIC
+        if controldata_rc == OCF_NOT_RUNNING:
+            # This state indicates that pg_isready check should fail with rc 2.
+            # We check again.
+            pgisready_rc = run_pgisready()
+            if pgisready_rc == 2:
+                # Consistent with pg_controdata output.
+                # We check the process status using pg_ctl status and check
+                # if it was propertly shut down using pg_controldata.
+                log_debug("{} is not listening", RSC_INST)
+                return confirm_stopped()
+            # Still not consistent, raise an error.
+            # TODO raise an hard error here ?
+            log_err("controldata of {} is not consistent "
+                    "with pg_isready (returned: {})", RSC_INST, pgisready_rc)
+            return OCF_ERR_GENERIC
+        # Something went wrong with the controldata check, hard fail.
+        log_err("could not get instance {} status from "
+                "controldata (returned: {})", RSC_INST, controldata_rc)
+        return OCF_ERR_INSTALLED
+    elif pgisready_rc == 2:
+        # The instance is not listening.
+        # We check the process status using pg_ctl status and check
+        # if it was propertly shut down using pg_controldata.
+        log_debug("instance {} is not listening", RSC_INST)
+        return confirm_stopped()
+    elif pgisready_rc == 3:
+        # No attempt was done, probably a syntax error.
+        # Hard configuration error, we don't want to retry or failover here.
+        log_err("unknown error while checking if {} "
+                "is listening (returned {})", RSC_INST, pgisready_rc)
+        return OCF_ERR_CONFIGURED
+    log_err("unexpected pg_isready status for {}", RSC_INST)
+    return OCF_ERR_GENERIC
+
+
+# Demote the PostgreSQL instance from primary to secondary
+# To demote a PostgreSQL instance, we must:
+#   * stop it gracefully
+#   * create recovery.conf with standby_mode = on
+#   * start it back
+def ocf_demote():
+    rc = ocf_monitor()
+    # Running as primary. Normal, expected behavior.
+    if rc == OCF_RUNNING_MASTER:
+        log_debug("{} running as a master", RSC_INST)
+    elif rc == OCF_SUCCESS:
+        # Already running as secondary. Nothing to do.
+        log_debug("{} running as a slave", RSC_INST)
+        return OCF_SUCCESS
+    elif rc == OCF_NOT_RUNNING:
+        # Instance is stopped. Nothing to do.
+        log_debug("{} stopped", RSC_INST)
+    elif rc == OCF_ERR_CONFIGURED:
+        # We actually prefer raising a hard or fatal error instead of leaving
+        # the CRM abording its transition for a new one because of a soft error.
+        # The hard error will force the CRM to move the resource immediately.
+        return OCF_ERR_CONFIGURED
+    else:
+        return OCF_ERR_GENERIC
+    # TODO we need to make sure at least one slave is connected!!
+    # WARNING if the resource state is stopped instead of master, the ocf ra dev
+    # rsc advises to return OCF_ERR_GENERIC, misleading the CRM in a loop where
+    # it computes transitions of demote(failing)->stop->start->promote actions
+    # until failcount == migration-threshold.
+    # This is a really ugly trick to keep going with the demode action if the
+    # rsc is already stopped gracefully.
+    # See discussion "CRM trying to demote a stopped resource" on
+    # developers@clusterlabs.org
+    if rc != OCF_NOT_RUNNING:
+        # insanely long timeout to ensure Pacemaker gives up firt
+        rc = pg_ctl_stop()
+        if rc != 0:
+            log_err("failed to stop {} (pg_ctl exited with {})", RSC_INST, rc)
+            return OCF_ERR_GENERIC
+        # Double check that the instance is stopped correctly.
+        rc = ocf_monitor()
+        if rc != OCF_NOT_RUNNING:
+            log_err("unexpected {} state: monitor status "
+                    "({}) disagree with pg_ctl return code", RSC_INST, rc)
+            return OCF_ERR_GENERIC
+    #
+    # At this point, the instance **MUST** be stopped gracefully.
+    #
+    # Note: We do not need to handle the recovery.conf file here as ocf_start
+    # deal with that itself. Equally, no need to wait for the start to complete
+    # here, handled in ocf_start.
+    rc = ocf_start()
+    if rc == OCF_SUCCESS:
+        log_info("{} started as a secondary", RSC_INST)
+        return OCF_SUCCESS
+    # NOTE: No need to double check the instance state as ocf_start already use
+    # ocf_monitor to check the state before returning.
+    log_err("failed to start {} as standby (returned {})", RSC_INST, rc)
+    return OCF_ERR_GENERIC
+
+
 def ocf_notify():
-    global notify_dict
-    notify_dict = get_notify_dict()
-    log_debug("ocf_notify: notify_dict:\n{}", json.dumps(notify_dict, indent=4))
-    type_op = notify_dict['type'] + "-" + notify_dict['operation']
+    set_notify_dict()
+    log_debug("notify_dict:\n{}", json.dumps(notify_dict, indent=4))
+    type_op = notify_dict["type"] + "-" + notify_dict["operation"]
     if type_op == "pre-promote":
         return notify_pre_promote()
     if type_op == "post-promote":
@@ -1383,27 +1315,27 @@ if __name__ == "__main__":
         print(OCF_METHODS)
         sys.exit()
     os.chdir(gettempdir())
-    if int(env_else('OCF_RESKEY_CRM_meta_clone_max', 0)) <= 0:
+    if int(os.environ.get("OCF_RESKEY_CRM_meta_clone_max", 0)) <= 0:
         log_err("OCF_RESKEY_CRM_meta_clone_max should be >= 1")
         sys.exit(OCF_ERR_CONFIGURED)
-    if env_else('OCF_RESKEY_CRM_meta_master_max', "") != "1":
+    if os.environ.get("OCF_RESKEY_CRM_meta_master_max", "") != "1":
         log_err("OCF_RESKEY_CRM_meta_master_max should == 1")
         sys.exit(OCF_ERR_CONFIGURED)
-    if OCF_ACTION == 'validate-all':
+    if OCF_ACTION == "validate-all":
         sys.exit(ocf_validate_all())
     if OCF_ACTION not in (
             "start", "stop", "monitor", "promote", "demote", "notify"):
         sys.exit(OCF_ERR_UNIMPLEMENTED)
     ocf_validate_all()
-    if OCF_ACTION == 'start':  # start as secondary only
+    if OCF_ACTION == "start":  # start as secondary only
         sys.exit(ocf_start())
-    if OCF_ACTION == 'stop':
+    if OCF_ACTION == "stop":
         sys.exit(ocf_stop())
-    if OCF_ACTION == 'monitor':
+    if OCF_ACTION == "monitor":
         sys.exit(ocf_monitor())
-    if OCF_ACTION == 'promote':
+    if OCF_ACTION == "promote":
         sys.exit(ocf_promote())
-    if OCF_ACTION == 'demote':
+    if OCF_ACTION == "demote":
         sys.exit(ocf_demote())
-    if OCF_ACTION == 'notify':
+    if OCF_ACTION == "notify":
         sys.exit(ocf_notify())
