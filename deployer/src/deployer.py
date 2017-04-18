@@ -105,10 +105,10 @@ class Cluster:
         self.ha_set_migration_threshold(5)
         self.ha_set_resource_stickiness(10)
         self.ha_disable_stonith()
-        self.ha_export_xml()
+        self.ha_get_cib()
         self.ha_add_pg_to_xml()
         self.ha_add_pg_vip_to_xml()
-        self.ha_import_xml()
+        self.ha_cib_push()
         # self.master.ha_create_vip()
 
     def ha_base_setup(self, vms):
@@ -155,7 +155,7 @@ class Cluster:
         self.master.ssh_run_check(
             f"pcs resource defaults migration-threshold={v}")
 
-    def ha_export_xml(self):
+    def ha_get_cib(self):
         self.master.ssh_run_check(
             f"pcs cluster cib {self.ha_cluster_xml_file}")
 
@@ -166,7 +166,6 @@ class Cluster:
             f"resource create pgsqld ocf:heartbeat:pgsqlha "
             f"bindir={master.pg_bindir} "
             f"pgdata={master.pg_data_directory} "
-            f"pghost=/var/run/postgresql "
             f"pgconf={master.pg_config_file} "
             f"op start timeout=60s "
             f"op stop timeout=60s "
@@ -178,8 +177,8 @@ class Cluster:
         master.ssh_run_check(
             f"pcs -f {self.ha_cluster_xml_file} "
             f"resource master pgsql-ha pgsqld "
-            f"master-max=1 master-node-max=1 "
-            f"clone-max=3 clone-node-max=1 notify=true")
+            f"clone-max=3 "
+            f"notify=true")
 
     def ha_add_pg_vip_to_xml(self):
         ipv4 = self.ha_get_vip_ipv4()
@@ -197,7 +196,7 @@ class Cluster:
             f"pcs -f {self.ha_cluster_xml_file} constraint order demote "
             f"pgsql-ha then stop pgsql-master-ip symmetrical=false")
 
-    def ha_import_xml(self):
+    def ha_cib_push(self):
         self.master.ssh_run_check(
             f"pcs cluster cib-push {self.ha_cluster_xml_file}")
 
