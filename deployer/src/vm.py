@@ -1,6 +1,7 @@
 import logging
 import re
-import subprocess
+import shlex
+from subprocess import check_output, CalledProcessError, STDOUT
 from abc import abstractmethod, ABCMeta
 from pathlib import Path
 from threading import Lock
@@ -54,36 +55,33 @@ class Vbox(VmBase):
     _vbox_running_vms = None
     vbox_lock = Lock()
 
-    def __init__(self, **kwargs):
+    def __init__(self, *, vboxmanage, **kwargs):
         super(Vbox, self).__init__(**kwargs)
+        self.vboxmanage = vboxmanage
 
-    def _vbox_manage(self, args, get_stdout):
-        cmd = f"vboxmanage {args}"
-        self.log(cmd)
+    def run_vboxmanage(self, args):
+        if type(args) is str:
+            cmd = [self.vboxmanage, *shlex.split(args)]
+        else:
+            cmd = [self.vboxmanage, *args]
+        self.log(" ".join(cmd))
         try:
-            res = subprocess.run(
-                cmd,
-                shell=True,
-                stderr=subprocess.DEVNULL,
-                stdout=subprocess.PIPE if get_stdout else subprocess.DEVNULL,
-                check=True)
-        except subprocess.CalledProcessError as e:
+            return check_output(cmd, stderr=STDOUT).decode()
+        except CalledProcessError as e:
             m = f"error running {cmd}:\n{e}"
             raise DeployerError(m)
-        if get_stdout:
-            return res.stdout.decode("utf-8")
 
     def get_existing_vms(self):
         with Vbox.vbox_lock:
             if Vbox._vbox_existing_vms is None:
-                s = self._vbox_manage(f'list vms', True)
+                s = self.run_vboxmanage('list vms')
                 Vbox._vbox_existing_vms = Vbox.VM_LIST_RE.findall(s)
         return Vbox._vbox_existing_vms
 
     def get_running_vms(self):
         with Vbox.vbox_lock:
             if Vbox._vbox_running_vms is None:
-                s = self._vbox_manage(f'list runningvms', True)
+                s = self.run_vboxmanage(f'list runningvms')
                 Vbox._vbox_running_vms = Vbox.VM_LIST_RE.findall(s)
         return Vbox._vbox_running_vms
 
@@ -91,7 +89,7 @@ class Vbox(VmBase):
         ova_file = str(ova_file)
         with Vbox.vbox_lock:
             if ova_file not in Vbox._vbox_ova_disk_units:
-                s = self._vbox_manage(f"import {ova_file} -n", True)
+                s = self.run_vboxmanage(f"import {ova_file} -n")
                 p = re.compile(r'(?P<n>\d+): Hard disk', re.M)
                 Vbox._vbox_ova_disk_units[ova_file] = p.findall(s)[0]
         return Vbox._vbox_ova_disk_units[ova_file]
@@ -99,13 +97,10 @@ class Vbox(VmBase):
     def get_vbox_machine_dir(self):
         with Vbox.vbox_lock:
             if Vbox._vbox_machine_dir is None:
-                s = self._vbox_manage("list systemproperties", True)
+                s = self.run_vboxmanage("list systemproperties")
                 p = re.compile(r'Default machine folder:\s*(?P<v>.*)')
                 Vbox._vbox_machine_dir = Path(p.findall(s)[0].strip())
         return Vbox._vbox_machine_dir
-
-    def vbox_manage(self, args, get_stdout):
-        return self._vbox_manage(args, get_stdout)
 
     def vm_deploy(self, fail_if_exists=True):
         name = self.name
@@ -114,14 +109,12 @@ class Vbox(VmBase):
                 return
             raise DeployerError(f"vm {name} already exists")
         vmdk = self.get_vbox_machine_dir() / name / f"{name}.vmdk"
-        self.vbox_manage(
-            (f'import {self.ova} --vsys 0 --vmname {name} --unit '
-             f'{self.get_disk_unit_of_ova(self.ova)} --disk "{vmdk}"'),
-            False)
+        self.run_vboxmanage(
+            f'import {self.ova} --vsys 0 --vmname {name} --unit '
+            f'{self.get_disk_unit_of_ova(self.ova)} --disk "{vmdk}"')
 
     def _del_ip_property(self):
-        self.vbox_manage(
-            f'guestproperty delete {self.name} {self.IP_PROP}', False)
+        self.run_vboxmanage(f'guestproperty delete {self.name} {self.IP_PROP}')
 
     def vm_start_and_get_ip(self, fail_if_already_running=True):
         already_running = self.name in self.get_running_vms()
@@ -129,15 +122,14 @@ class Vbox(VmBase):
             raise DeployerError(f"vm {self.name} already running")
         if not already_running:
             self._del_ip_property()
-            self.vbox_manage(f'startvm {self.name}', False)
+            self.run_vboxmanage(f'startvm {self.name}')
             self.boot_sleep()
         self._get_ip()
         self.log(f"vm {self.name} is running with ip {self.ip}")
 
     def _get_ip_property(self):
         # b'Value: 192.168.179.10\r\n'
-        s = self.vbox_manage(
-            f'guestproperty get {self.name} {self.IP_PROP}', True)
+        s = self.run_vboxmanage(f'guestproperty get {self.name} {self.IP_PROP}')
         if ":" not in s:
             return None
         self.ip = self.IP_RE.findall(s)[0]

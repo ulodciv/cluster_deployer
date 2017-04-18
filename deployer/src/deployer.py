@@ -1,4 +1,3 @@
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path, PurePosixPath
@@ -18,13 +17,14 @@ def raise_first(futures):
 
 class Cluster:
 
-    def __init__(self, cluster_def, no_threads=False):
+    def __init__(self, vboxmanage, cluster_def, no_threads=False):
         self.ha_cluster_xml_file = f"cluster.xml"
         self.cluster_name = cluster_def["cluster_name"]
         self.virtual_ip = cluster_def["virtual_ip"]
         self.demo_db = cluster_def["demo_db"]
         self.pg_ra = cluster_def["pg_ra"]
         common = {k: v for k, v in cluster_def.items() if k != "hosts"}
+        common["vboxmanage"] = vboxmanage
         common["paramiko_key"] = RSAKey.from_private_key_file(
             common["key_file"])
         with open(common["pub_key_file"]) as f:
