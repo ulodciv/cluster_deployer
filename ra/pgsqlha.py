@@ -529,8 +529,8 @@ def get_ocf_status():
 # still alive. This is fine: monitor will find this to be a hard error.
 def pg_ctl_status():
     rc = as_postgres([get_pgctl(), "status", "-D", get_pgdata()])
-    # pg_ctl status exits with 3 when postmaster.pid does not exist or the process
-    # with the PID is not alive (otherwise it returns 0)
+    # pg_ctl status exits with 3 when postmaster.pid does not exist or the
+    # process with the PID is not alive (otherwise it returns 0)
     return rc
 
 
@@ -548,8 +548,7 @@ def pg_ctl_stop():
                         "-w", "-t", 1000000, "-m", "fast"])
 
 
-# Confirm PG is really stopped as pgisready stated
-# and that it was propertly shut down.
+# PG is really stopped as pgisready stated and it was propertly shut down
 def confirm_stopped():
     # Check the postmaster process status.
     pgctlstatus_rc = pg_ctl_status()
@@ -577,9 +576,10 @@ def confirm_stopped():
         # The controldata has not been updated to "shutdown in recovery".
         # It should mean we had a crash on a secondary instance.
         # There is no "FAILED_SLAVE" return code, so we return a generic error.
-        log_err("{} appears to be a running secondary, it has probably crashed",
-                RSC_INST)
-        return OCF_ERR_GENERIC
+        log_warn(
+            "{} appears to be a crashed secondary, let's pretend all is good "
+            "so that Pacemaker tries to start it back as-is", RSC_INST)
+        return OCF_NOT_RUNNING
     elif controldata_rc == OCF_NOT_RUNNING:
         # The controldata state is consistent, the instance was probably
         # propertly shut down.

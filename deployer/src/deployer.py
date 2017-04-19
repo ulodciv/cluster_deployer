@@ -226,6 +226,7 @@ class Vm(Vbox, Postgres):
         self.pg_drop_db(db)
         self.pg_create_db(db)
         self.ssh_run_check(
-            f"cd /tmp/{db} && psql -v ON_ERROR_STOP=1 -t -q -f install.sql {db}",
+            f"cd /tmp/{db} && psql -v ON_ERROR_STOP=1 -t -q "
+            f"-f install.sql {db}",
             self.pg_user)
         self.ssh_run_check(f'rm -rf /tmp/{db}')

@@ -2,7 +2,7 @@ import json
 import logging
 from argparse import ArgumentParser
 from datetime import timedelta
-from subprocess import check_output, CalledProcessError, call
+from subprocess import check_output, CalledProcessError, STDOUT
 from time import time
 
 from deployer import Cluster
@@ -11,17 +11,17 @@ from deployer_error import DeployerError
 
 def find_vboxmanage():
     try:
-        return check_output("where vboxmanage.exe").decode().strip()
+        return check_output("where vboxmanage.exe", stderr=STDOUT).decode().strip()
     except CalledProcessError:
         pass
     f = r"C:\Program Files\Oracle\VirtualBox\vboxmanage.exe"
     try:
-        _ = check_output([f, "-v"])
+        _ = check_output([f, "-v"], stderr=STDOUT)
         return f
     except CalledProcessError:
         pass
     try:
-        _ = check_output(["vboxmanage.exe", "-v"])
+        _ = check_output(["vboxmanage.exe", "-v"], stderr=STDOUT)
         return "vboxmanage.exe"
     except FileNotFoundError:
         raise DeployerError("can't find vboxmanage.exe: is VBox installed?")
