@@ -5,6 +5,7 @@ from ipaddress import ip_interface, IPv4Interface, IPv4Address
 
 from paramiko import RSAKey
 
+from deployer_error import DeployerError
 from postgres import Postgres
 from vm import Vbox
 

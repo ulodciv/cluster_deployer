@@ -126,12 +126,13 @@ class Linux(VmBase, metaclass=ABCMeta):
                 ssh,
                 f"getent passwd {user_obj.user}",
                 True)
-            user_obj.home_dir = o.read().decode('utf-8').split(":")[5]
+            user_obj.home_dir = o.read().decode().split(":")[5]
 
     def selinux_is_active(self):
         if self._selinux_is_active is None:
             o, e = self.ssh_run_check("getenforce")
-            self._selinux_is_active = o.read().decode('utf-8').strip().lower() == "enforcing"
+            self._selinux_is_active = (
+                o.read().decode().strip().lower() == "enforcing")
         return self._selinux_is_active
 
     def setup_users(self):

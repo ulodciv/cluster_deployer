@@ -1,7 +1,7 @@
 import logging
 import re
 import shlex
-from subprocess import check_output, CalledProcessError, STDOUT
+from subprocess import run, PIPE
 from abc import abstractmethod, ABCMeta
 from pathlib import Path
 from threading import Lock
@@ -65,11 +65,10 @@ class Vbox(VmBase):
         else:
             cmd = [self.vboxmanage, *args]
         self.log(" ".join(cmd))
-        try:
-            return check_output(cmd, stderr=STDOUT).decode()
-        except CalledProcessError as e:
-            m = f"error running {cmd}:\n{e}"
-            raise DeployerError(m)
+        res = run(cmd, stdout=PIPE, stderr=PIPE)
+        if res.returncode:
+            raise DeployerError(f"error running {cmd}:\n{res.stderr}")
+        return res.stdout.decode()
 
     def get_existing_vms(self):
         with Vbox.vbox_lock:

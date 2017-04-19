@@ -3,7 +3,7 @@ Easily deploy clusters of 2+ nodes with resilisent replicated Postgresql.
 
 Runs on Windows, and should run on other UNIX-likes with little changes.
 
-Requires Python 3.6 and external module Paramiko.
+Requires Python 3.6 using external module Paramiko.
 
 Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
 

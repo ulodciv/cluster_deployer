@@ -23,12 +23,12 @@ os.environ['OCF_RESOURCE_INSTANCE'] = "foo"
 pgversion = "9.6"
 linux_distro = get_distro()
 if linux_distro == "CENTOS":
-    pgbin = "/usr/pgsql-{}/bin".format(pgversion)
+    PGBIN = "/usr/pgsql-{}/bin".format(pgversion)
 elif linux_distro in ("DEBIAN", "UBUNTU"):
-    pgbin = "/usr/lib/postgresql/{}/bin".format(pgversion)
+    PGBIN = "/usr/lib/postgresql/{}/bin".format(pgversion)
 else:
     raise Exception("unknown linux distro: " + linux_distro)
-os.environ['OCF_RESKEY_bindir'] = pgbin
+os.environ['OCF_RESKEY_bindir'] = PGBIN
 
 
 import pgsqlha as RA
@@ -37,19 +37,42 @@ import pgsqlha as RA
 os.chdir(gettempdir())
 
 
+PGUSER = "postgres"
+PGUSER_UID, PGUSER_GID = pwd.getpwnam(PGUSER)[2:4]
+UNAME = subprocess.check_output("UNAME -n", shell=True).strip()
+PGDATA_MASTER = "/tmp/pgsqlha_test_master"
+PGDATA_SLAVE = "/tmp/pgsqlha_test_slave"
+PGPORT_MASTER = "15432"
+PGPORT_SLAVE = "15433"
+PGSTART_OPTS = "'-c config_file={}/postgresql.conf'".format(PGBIN)
+TPL = """\
+standby_mode = on
+recovery_target_timeline = latest
+primary_conninfo = 'host=/var/run/postgresql port={} user={} application_name={}'
+""".format(PGPORT_MASTER, PGUSER, UNAME)
+CONF_ADDITIONS = """
+listen_addresses = '*'
+port = {}
+wal_level = replica
+max_wal_senders = 5
+hot_standby = on
+hot_standby_feedback = on
+wal_receiver_status_interval = 20s
+"""
+HBA_ADDITIONS = "\nlocal replication all trust\n"
+
+
 def change_user_to_postgres():
-    uid, gid = pwd.getpwnam("postgres")[2:4]
-    os.initgroups("postgres", gid)
-    os.setgid(gid)
-    os.setuid(uid)
-    os.seteuid(uid)
+    os.initgroups(PGUSER, PGUSER_GID)
+    os.setgid(PGUSER_GID)
+    os.setuid(PGUSER_UID)
+    os.seteuid(PGUSER_UID)
 
 
 def write_as_pg(f, s):
-    uid, gid = pwd.getpwnam("postgres")[2:4]
     with open(f, "w") as fh:
         fh.write(s)
-    os.chown(f, uid, gid)
+    os.chown(f, PGUSER_UID, PGUSER_GID)
 
 
 def run_as_pg(cmd, check=True):
@@ -59,104 +82,82 @@ def run_as_pg(cmd, check=True):
             return check_call(
                 cmd, shell=True, cwd="/tmp",
                 preexec_fn=change_user_to_postgres)
-                # stdout=DEVNULL, stderr=STDOUT)
         else:
             return call(
                 cmd, shell=True, cwd="/tmp",
                 preexec_fn=change_user_to_postgres)
-                # stdout=DEVNULL, stderr=STDOUT)
 
+
+class TestMasterScenarios(unittest.TestCase):
+    pass
+    
 
 class TestPg(unittest.TestCase):
-    pguser = "postgres"
-    pguid, pggid = pwd.getpwnam("postgres")[2:4]
-    uname = subprocess.check_output("uname -n", shell=True).strip()
-    pgdata_master = "/tmp/pgsqlha_test_master"
-    pgdata_slave = "/tmp/pgsqlha_test_slave"
-    pgport_master = "15432"
-    pgport_slave = "15433"
-    pgstart_opts = "'-c config_file={}/postgresql.conf'"
-    tpl = """\
-standby_mode = on
-recovery_target_timeline = latest
-primary_conninfo = 'host=/var/run/postgresql port=15432 user=postgres application_name={}'
-""".format(uname)
-    conf_additions = """
-listen_addresses = '*'
-port = {}
-wal_level = replica
-max_wal_senders = 5
-hot_standby = on
-hot_standby_feedback = on
-wal_receiver_status_interval = 20s
-"""
-    hba_additions = "\nlocal replication all trust\n"
 
     @classmethod
     def start_pg(cls, pgdata):
-        run_as_pg(
-            "{0}/pg_ctl start -D {1} -o '-c config_file={1}/postgresql.conf' -w".format(
-                pgbin, pgdata))
+        run_as_pg("{}/pg_ctl start -D {} -o {} -w".format(
+            PGBIN, pgdata, PGSTART_OPTS))
 
     @classmethod
     def start_pg_master(cls):
-        cls.start_pg(cls.pgdata_master)
+        cls.start_pg(PGDATA_MASTER)
 
     @classmethod
     def start_pg_slave(cls):
-        cls.start_pg(cls.pgdata_slave)
+        cls.start_pg(PGDATA_SLAVE)
 
     @classmethod
     def stop_pg(cls, pgdata):
-        run_as_pg("{}/pg_ctl stop -D {} -w".format(pgbin, pgdata))
+        run_as_pg("{}/pg_ctl stop -D {} -w".format(PGBIN, pgdata))
 
     @classmethod
     def stop_pg_master(cls):
-        cls.stop_pg(cls.pgdata_master)
+        cls.stop_pg(PGDATA_MASTER)
 
     @classmethod
     def stop_pg_slave(cls):
-        cls.stop_pg(cls.pgdata_slave)
+        cls.stop_pg(PGDATA_SLAVE)
 
     @classmethod
     def crash_stop_pg(cls, pgdata):
-        run_as_pg("{}/pg_ctl stop -D {} -w -m immediate".format(pgbin, pgdata))
+        run_as_pg("{}/pg_ctl stop -D {} -w -m immediate".format(PGBIN, pgdata))
 
     @classmethod
     def cleanup(cls):
-        for datadir in (cls.pgdata_master, cls.pgdata_slave):
+        for datadir in (PGDATA_MASTER, PGDATA_SLAVE):
             try:
                 cls.crash_stop_pg(datadir)
             except subprocess.CalledProcessError:
                 pass
-        run_as_pg("rm -rf {}".format(cls.pgdata_master))
-        run_as_pg("rm -rf {}".format(cls.pgdata_slave))
+        run_as_pg("rm -rf {}".format(PGDATA_MASTER))
+        run_as_pg("rm -rf {}".format(PGDATA_SLAVE))
 
     @classmethod
     def setUpClass(cls):
         cls.cleanup()
         # create master instance
-        run_as_pg("mkdir -p -m 0700 {}".format(cls.pgdata_master))
-        run_as_pg("{}/initdb -D {}".format(pgbin, cls.pgdata_master))
-        with open(cls.pgdata_master + "/postgresql.conf", "a") as fh:
-            fh.write(cls.conf_additions.format(cls.pgport_master))
-        with open(cls.pgdata_master + "/pg_hba.conf", "a") as fh:
-            fh.write(cls.hba_additions)
+        run_as_pg("mkdir -p -m 0700 {}".format(PGDATA_MASTER))
+        run_as_pg("{}/initdb -D {}".format(PGBIN, PGDATA_MASTER))
+        with open(PGDATA_MASTER + "/postgresql.conf", "a") as fh:
+            fh.write(CONF_ADDITIONS.format(PGPORT_MASTER))
+        with open(PGDATA_MASTER + "/pg_hba.conf", "a") as fh:
+            fh.write(HBA_ADDITIONS)
         cls.start_pg_master()
         # backup master to slave and set it up as a standby
-        run_as_pg("mkdir -p -m 0700 {}".format(cls.pgdata_slave))
+        run_as_pg("mkdir -p -m 0700 {}".format(PGDATA_SLAVE))
         run_as_pg("pg_basebackup -D {} -d 'port={}' -Xs".format(
-            cls.pgdata_slave, cls.pgport_master))
+            PGDATA_SLAVE, PGPORT_MASTER))
         run_as_pg(
             "sed -i s/{}/{}/ {}".format(
-                cls.pgport_master,
-                cls.pgport_slave,
-                cls.pgdata_slave + "/postgresql.conf"))
-        write_as_pg(cls.pgdata_slave + "/recovery.conf", """\
+                PGPORT_MASTER,
+                PGPORT_SLAVE,
+                PGDATA_SLAVE + "/postgresql.conf"))
+        write_as_pg(PGDATA_SLAVE + "/recovery.conf", """\
 standby_mode = on
 recovery_target_timeline = latest
 primary_conninfo = 'port={}'
-""".format(cls.pgport_master))
+""".format(PGPORT_MASTER))
         cls.start_pg_slave()
 
     @classmethod
@@ -172,30 +173,32 @@ primary_conninfo = 'port={}'
         except subprocess.CalledProcessError:
             pass
         run_as_pg("rm -f " + RA.get_recovery_pcmk(), False)
-        os.environ['OCF_RESKEY_start_opts'] = '-c config_file={}/postgresql.conf'.format(self.pgdata_slave)
+        os.environ['OCF_RESKEY_start_opts'] = (
+            '-c config_file={}/postgresql.conf').format(PGDATA_SLAVE)
         # os.environ['OCF_RESKEY_pghost'] = "localhost"
         self.set_env_to_slave()
 
     @classmethod
     def set_env_to_master(cls):
-        os.environ['OCF_RESKEY_pgdata'] = cls.pgdata_master
-        os.environ['OCF_RESKEY_pgport'] = cls.pgport_master
+        os.environ['OCF_RESKEY_pgdata'] = PGDATA_MASTER
+        os.environ['OCF_RESKEY_pgport'] = PGPORT_MASTER
 
     @classmethod
     def set_env_to_slave(cls):
-        os.environ['OCF_RESKEY_pgdata'] = cls.pgdata_slave
-        os.environ['OCF_RESKEY_pgport'] = cls.pgport_slave
+        os.environ['OCF_RESKEY_pgdata'] = PGDATA_SLAVE
+        os.environ['OCF_RESKEY_pgport'] = PGPORT_SLAVE
 
     def test_ra_action_start(self):
         self.assertRaises(SystemExit, RA.ocf_start)
         with self.assertRaises(SystemExit) as cm:
             RA.ocf_start()
         self.assertEqual(cm.exception.code, RA.OCF_ERR_CONFIGURED)
-        write_as_pg(RA.get_recovery_pcmk(), TestPg.tpl)
+        write_as_pg(RA.get_recovery_pcmk(), TPL)
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_start())
         # check if it is connecting to the master
         self.set_env_to_master()
-        self.assertEqual("centos-pg-1", RA.get_connected_standbies()[0].application_name)
+        self.assertEqual("centos-pg-1",
+                         RA.get_connected_standbies()[0].application_name)
 
     def test_ra_action_stop(self):
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_stop())
@@ -252,7 +255,7 @@ primary_conninfo = 'port={}'
         with self.assertRaises(SystemExit) as cm:
             RA.ocf_validate_all()
         self.assertEqual(cm.exception.code, RA.OCF_ERR_ARGS)
-        write_as_pg(RA.get_recovery_pcmk(), TestPg.tpl)
+        write_as_pg(RA.get_recovery_pcmk(), TPL)
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
         try:
             os.environ['OCF_RESKEY_bindir'] = "foo"
@@ -260,7 +263,7 @@ primary_conninfo = 'port={}'
                 RA.ocf_validate_all()
             self.assertEqual(cm.exception.code, RA.OCF_ERR_INSTALLED)
         finally:
-            os.environ['OCF_RESKEY_bindir'] = pgbin
+            os.environ['OCF_RESKEY_bindir'] = PGBIN
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
         try:
             os.environ['OCF_RESKEY_pguser'] = "bar"
@@ -280,10 +283,11 @@ primary_conninfo = 'port={}'
             RA.MIN_PG_VER = ver_backup
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
 
+    def test_demote_failed_master(self):
+        pass
+
 
 class TestHa(unittest.TestCase):
-
-    uname = subprocess.check_output("uname -n", shell=True).strip()
 
     def setUp(self):
         RA.OCF_ACTION = None
@@ -292,11 +296,11 @@ class TestHa(unittest.TestCase):
 
     def test_get_ha_nodes(self):
         nodes = RA.get_ha_nodes()
-        self.assertIn(TestHa.uname, nodes)
+        self.assertIn(UNAME, nodes)
 
     def test_get_ocf_nodename(self):
         n = RA.get_ocf_nodename()
-        self.assertEqual(n, TestHa.uname)
+        self.assertEqual(n, UNAME)
 
     def test_ha_private_attr(self):
         RA.del_ha_private_attr("bla")
@@ -336,10 +340,10 @@ class TestHa(unittest.TestCase):
 
 
 class TestRegExes(unittest.TestCase):
-    tpl = """\
-primary_conninfo = 'user=postgres host=127.0.0.1 port=15432 application_name=pc1234.home'
+    TPL = """\
+primary_conninfo = 'user={} host=127.0.0.1 port=15432 application_name=pc1234.home'
 recovery_target_timeline = 'latest'
-"""
+""".format(PGUSER)
     cluster_state = """\
 Catalog version number:               201608131
 Database system identifier:           6403755386726595987
@@ -348,11 +352,11 @@ pg_control last modified:             Fri 31 Mar 2017 10:01:29 PM CEST
 """
 
     def test_tpl_file(self):
-        m = re.search(RA.RE_TPL_TIMELINE, TestRegExes.tpl, re.M)
+        m = re.search(RA.RE_TPL_TIMELINE, TestRegExes.TPL, re.M)
         self.assertIsNotNone(m)
 
     def test_app_name(self):
-        m = re.findall(RA.RE_APP_NAME, TestRegExes.tpl, re.M)
+        m = re.findall(RA.RE_APP_NAME, TestRegExes.TPL, re.M)
         self.assertIsNotNone(m)
         self.assertEqual(m[0], "pc1234.home")
 
