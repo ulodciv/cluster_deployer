@@ -108,8 +108,8 @@ methods
 meta-data
 validate-all"""
 RSC_INST = os.environ.get('OCF_RESOURCE_INSTANCE')
-OCF_ACTION = sys.argv[1] if len(sys.argv) > 1 else None
-LOG_TAG = "{}:{}({})[{}]".format(PROGRAM, OCF_ACTION, RSC_INST, os.getpid())
+ACTION = sys.argv[1] if len(sys.argv) > 1 else None
+LOG_TAG = "{}:{}({})[{}]".format(PROGRAM, ACTION, RSC_INST, os.getpid())
 notify_dict = None
 
 
@@ -460,7 +460,7 @@ def confirm_role():
             # The instance is a primary.
             log_debug("{} is a primary", RSC_INST)
             # Check lsn diff with current slaves if any
-            if OCF_ACTION == "monitor":
+            if ACTION == "monitor":
                 check_locations()
             return OCF_RUNNING_MASTER
         # This should not happen, raise a hard configuration error.
@@ -1092,48 +1092,42 @@ def ocf_validate_all():
 def ocf_start():
     rc = ocf_monitor()
     prev_state = get_pg_cluster_state()
-    # Instance must be running as secondary or being stopped.
-    # Anything else is an error.
+    # Instance must be stopped or running as secondary
     if rc == OCF_SUCCESS:
         log_info("{} is already started", RSC_INST)
         return OCF_SUCCESS
     elif rc != OCF_NOT_RUNNING:
         log_err("unexpected state for {} (returned {})", RSC_INST, rc)
         return OCF_ERR_GENERIC
-    #
-    # From here, the instance is NOT running for sure.
-    #
+    # From here, the instance is NOT running
     log_debug("{} is stopped, starting it as a secondary", RSC_INST)
-    # Create recovery.conf from the template file.
     create_recovery_conf()
-    # Start the instance as a secondary.
     rc = pg_ctl_start()
-    if rc == 0:
-        # Wait for the start to finish.
-        while True:
-            rc = ocf_monitor()
-            if rc != OCF_NOT_RUNNING:
-                break
-            sleep(1)
-        if rc == OCF_SUCCESS:
-            log_info("{} started", RSC_INST)
-            # Check if a master score exists in the cluster.
-            # During the first cluster start, no master score will exist on any
-            # of the slaves, unless an admin designated one using crm_master.
-            # If no master exists the cluster won't promote one from the slaves.
-            # To solve this, we check if there is at least one master
-            # score existing on one node. Do nothing if at least one master
-            # score is found in the clones of the resource. If no master score
-            # exists, set a score of 1 only if the resource was a
-            # master shut down before the start.
-            if prev_state == "shut down" and not _master_score_exists():
-                log_info("no master score around; set mine to 1")
-                set_master_score("1")
-            return OCF_SUCCESS
+    if rc != 0:
+        log_err("{} failed to start (rc: {})", RSC_INST, rc)
+        return OCF_ERR_GENERIC
+    # Wait for the start to finish.
+    while True:
+        rc = ocf_monitor()
+        if rc != OCF_NOT_RUNNING:
+            break
+        sleep(1)
+    if rc != OCF_SUCCESS:
         log_err("{} is not running as a slave (returned {})", RSC_INST, rc)
         return OCF_ERR_GENERIC
-    log_err("{} failed to start (rc: {})", RSC_INST, rc)
-    return OCF_ERR_GENERIC
+    log_info("{} started", RSC_INST)
+    # Check if a master score exists in the cluster.
+    # During the first cluster start, no master score will exist on any of the
+    # slaves, unless an admin set one with crm_master. If no master exists the
+    # cluster won't promote one from the slaves. To solve this, we check if
+    # there is at least one master score existing on one node. Do nothing if at
+    # least one master score is found in the clones of the resource. If no
+    # master score exists, set a score of 1 only if the resource was a
+    # master shut down before the start.
+    if prev_state == "shut down" and not _master_score_exists():
+        log_info("no master score around; set mine to 1")
+        set_master_score("1")
+    return OCF_SUCCESS
 
 
 # Stop the PostgreSQL instance
@@ -1238,11 +1232,9 @@ def ocf_monitor():
 #   * start it back
 def ocf_demote():
     rc = ocf_monitor()
-    # Running as primary. Normal, expected behavior.
     if rc == OCF_RUNNING_MASTER:
         log_debug("{} running as a master", RSC_INST)
     elif rc == OCF_SUCCESS:
-        # Already running as secondary. Nothing to do.
         log_debug("{} running as a slave", RSC_INST)
         return OCF_SUCCESS
     elif rc == OCF_NOT_RUNNING:
@@ -1276,18 +1268,13 @@ def ocf_demote():
             log_err("unexpected {} state: monitor status "
                     "({}) disagree with pg_ctl return code", RSC_INST, rc)
             return OCF_ERR_GENERIC
-    #
     # At this point, the instance **MUST** be stopped gracefully.
-    #
-    # Note: We do not need to handle the recovery.conf file here as ocf_start
-    # deal with that itself. Equally, no need to wait for the start to complete
-    # here, handled in ocf_start.
+    # What we are left to do here is to start again which will do the actual
+    # demotion by mean of setting up the recovery.conf.
     rc = ocf_start()
     if rc == OCF_SUCCESS:
-        log_info("{} started as a secondary", RSC_INST)
+        log_info("{} started as a standby", RSC_INST)
         return OCF_SUCCESS
-    # NOTE: No need to double check the instance state as ocf_start already use
-    # ocf_monitor to check the state before returning.
     log_err("failed to start {} as standby (returned {})", RSC_INST, rc)
     return OCF_ERR_GENERIC
 
@@ -1308,10 +1295,10 @@ def ocf_notify():
 
 
 if __name__ == "__main__":
-    if OCF_ACTION == "meta-data":
+    if ACTION == "meta-data":
         print(OCF_META_DATA)
         sys.exit()
-    if OCF_ACTION == "methods":
+    if ACTION == "methods":
         print(OCF_METHODS)
         sys.exit()
     os.chdir(gettempdir())
@@ -1321,21 +1308,21 @@ if __name__ == "__main__":
     if os.environ.get("OCF_RESKEY_CRM_meta_master_max", "") != "1":
         log_err("OCF_RESKEY_CRM_meta_master_max should == 1")
         sys.exit(OCF_ERR_CONFIGURED)
-    if OCF_ACTION == "validate-all":
+    if ACTION == "validate-all":
         sys.exit(ocf_validate_all())
-    if OCF_ACTION not in (
-            "start", "stop", "monitor", "promote", "demote", "notify"):
+    if ACTION in ("start", "stop", "monitor", "promote", "demote", "notify"):
+        ocf_validate_all()
+        if ACTION == "start":  # start as secondary only
+            sys.exit(ocf_start())
+        if ACTION == "stop":
+            sys.exit(ocf_stop())
+        if ACTION == "monitor":
+            sys.exit(ocf_monitor())
+        if ACTION == "promote":
+            sys.exit(ocf_promote())
+        if ACTION == "demote":
+            sys.exit(ocf_demote())
+        if ACTION == "notify":
+            sys.exit(ocf_notify())
+    else:
         sys.exit(OCF_ERR_UNIMPLEMENTED)
-    ocf_validate_all()
-    if OCF_ACTION == "start":  # start as secondary only
-        sys.exit(ocf_start())
-    if OCF_ACTION == "stop":
-        sys.exit(ocf_stop())
-    if OCF_ACTION == "monitor":
-        sys.exit(ocf_monitor())
-    if OCF_ACTION == "promote":
-        sys.exit(ocf_promote())
-    if OCF_ACTION == "demote":
-        sys.exit(ocf_demote())
-    if OCF_ACTION == "notify":
-        sys.exit(ocf_notify())
