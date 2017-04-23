@@ -29,6 +29,8 @@ OCF_ERR_CONFIGURED = 6
 OCF_NOT_RUNNING = 7
 OCF_RUNNING_MASTER = 8
 OCF_FAILED_MASTER = 9
+RS = chr(30)  # RS (record separator)
+FS = chr(3)  # ETX (end of text)
 RE_WAL_LEVEL = r"^wal_level setting:\s+(.*?)\s*$"
 RE_TPL_TIMELINE = r"^\s*recovery_target_timeline\s*=\s*'?latest'?\s*$"
 RE_STANDBY_MODE = r"^\s*standby_mode\s*=\s*'?on'?\s*$"
@@ -302,8 +304,6 @@ def as_postgres(cmd):
 
 def pg_execute(query):
     connstr = "dbname=postgres"
-    RS = chr(30)  # RS (record separator)
-    FS = chr(3)  # ETX (end of text)
     try:
         tmp_fh, tmp_filename = tempfile.mkstemp(prefix="pgsqlms-")
         os.write(tmp_fh, query)
@@ -376,7 +376,7 @@ def get_connected_standbies():
         log_err("query to get standby locations failed ({})", rc)
         sys.exit(OCF_ERR_GENERIC)
     if not rs:
-        log_warn("no secondary connected")
+        log_warn("no standby connected")
     nt = namedtuple("nt", "application_name priority location state")
     return [nt(*r) for r in rs]
 
@@ -388,15 +388,14 @@ def get_connected_standbies():
 # actually re-checks that it is the best candidate and forces a re-election by
 # failing if a better one exists.
 # This avoid a race condition between the call of the monitor action and the
-# promotion where another slave might have catchup faster with the master.
+# promotion where another standby might have catchup faster with the master.
 # NOTE: we cannot directly use write_location, nor lsn_diff as promotion score
 # because Pacemaker considers any value greater than 1,000,000 to be INFINITY.
 #
 # Supposed to be called from a master monitor action.
 def check_locations():
     nodename = get_ocf_nodename()
-    # Call crm_node to exclude nodes that are not part of the cluster at this
-    # point.
+    # exclude nodes that are not part of the cluster
     partition_nodes = get_ha_nodes()
     # For each standby connected, set their master score based on the following
     # rule: the first known node/application, with the highest priority and
@@ -436,7 +435,7 @@ def check_locations():
         # Exclude the current node.
         if node == nodename:
             continue
-        log_warn("{} is not connected to the primary, set score to -1000", node)
+        log_warn("{} is not connected to the master, set score to -1000", node)
         set_master_score("-1000", node)
     # Finally set the master score if not already done
     node_score = get_master_score()
@@ -445,27 +444,25 @@ def check_locations():
     return OCF_SUCCESS
 
 
-# Check to confirm if the instance is really started as run_pgisready stated and
-# check if the instance is primary or secondary.
+# Check to confirm if the instance is really started as pgisready stated and
+# check if the instance is master or standby.
 def confirm_role():
     rc, rs = pg_execute("SELECT pg_is_in_recovery()")
     is_in_recovery = rs[0][0]
     if rc == 0:
         # The query was executed, check the result.
         if is_in_recovery == "t":
-            # The instance is a secondary.
-            log_debug("{} is a secondary", RSC_INST)
+            log_debug("{} is a standby", RSC_INST)
             return OCF_SUCCESS
         elif is_in_recovery == "f":
-            # The instance is a primary.
-            log_debug("{} is a primary", RSC_INST)
+            log_debug("{} is a master", RSC_INST)
             # Check lsn diff with current slaves if any
             if ACTION == "monitor":
                 check_locations()
             return OCF_RUNNING_MASTER
         # This should not happen, raise a hard configuration error.
         log_err("unexpected result from query to check if {}\" "
-                "is a primary or a secondary: '{}'", RSC_INST, is_in_recovery)
+                "is a master or a standby: '{}'", RSC_INST, is_in_recovery)
         return OCF_ERR_CONFIGURED
     elif rc in (1, 2):
         # psql cound not connect to the instance.
@@ -475,7 +472,7 @@ def confirm_role():
         return OCF_ERR_GENERIC
     # The query failed (rc: 3) or bad parameters (rc: -1).
     # This should not happen, raise a hard configuration error.
-    log_err("query to check if {} is a primary or secondary failed (rc: {})",
+    log_err("query to check if {} is a master or standby failed (rc: {})",
             RSC_INST, rc)
     return OCF_ERR_CONFIGURED
 
@@ -495,7 +492,7 @@ def get_pg_cluster_state():
 
 # Loop until pg_controldata returns a non-transitional state
 # When this happens: return an OCF status based on the cluster state.
-# Used to find out if this instance is a primary or secondary.
+# Used to find out if this instance is a master or standby.
 # Also used to detect if the instance has crashed.
 def get_ocf_status():
     while True:
@@ -509,9 +506,9 @@ def get_ocf_status():
         # This state includes warm standby (rejects connections attempts,
         # including pg_isready)
         if state == "in archive recovery":
-            return OCF_SUCCESS  # is a slave
+            return OCF_SUCCESS  # is a standby
         # The instance should be stopped.
-        # We don't care if it was a primary or secondary before, because we
+        # We don't care if it was a master or standby before, because we
         # always start instances as secondaries, and then promote if necessary.
         if state in ("shut down", "shut down in recovery"):
             return OCF_NOT_RUNNING  # is stopped
@@ -562,22 +559,22 @@ def confirm_stopped():
     log_debug("no postmaster process found for {}", RSC_INST)
     backup_lbl = os.path.join(get_pgdata(), "backup_label")
     if os.path.isfile(backup_lbl):
-        log_debug("found {}: probably a never started secondary", backup_lbl)
+        log_debug("found {}: probably a never started standby", backup_lbl)
         return OCF_NOT_RUNNING
     # Continue the check with pg_controldata.
     controldata_rc = get_ocf_status()
     if controldata_rc == OCF_RUNNING_MASTER:
         # The controldata has not been updated to "shutdown".
-        # It should mean we had a crash on a primary instance.
+        # It should mean we had a crash on a master instance.
         log_err("{}'s controldata indicates a running "
-                "primary, the instance has probably crashed", RSC_INST)
+                "master, the instance has probably crashed", RSC_INST)
         return OCF_FAILED_MASTER
     elif controldata_rc == OCF_SUCCESS:
         # The controldata has not been updated to "shutdown in recovery".
-        # It should mean we had a crash on a secondary instance.
+        # It should mean we had a crash on a standby instance.
         # There is no "FAILED_SLAVE" return code, so we return a generic error.
         log_warn(
-            "{} appears to be a crashed secondary, let's pretend all is good "
+            "{} appears to be a crashed standby, let's pretend all is good "
             "so that Pacemaker tries to start it back as-is", RSC_INST)
         return OCF_NOT_RUNNING
     elif controldata_rc == OCF_NOT_RUNNING:
@@ -604,10 +601,10 @@ def create_recovery_conf():
     recovery_tpl = get_recovery_pcmk()
     log_debug("get replication configuration from "
               "the template file {}", recovery_tpl)
-    # Create the recovery.conf file to start the instance as a secondary.
-    # NOTE: the recovery.conf is supposed to be set up so the secondary can
-    # connect to the primary instance, usually using a virtual IP address.
-    # As there is no primary instance available at startup, secondaries will
+    # Create the recovery.conf file to start the instance as a standby.
+    # NOTE: the recovery.conf is supposed to be set up so the standby can
+    # connect to the master instance, usually using a virtual IP address.
+    # As there is no master instance available at startup, secondaries will
     # complain about failing to connect.
     # As we can not reload a recovery.conf file on a standby without restarting
     # it, we will leave with this.
@@ -678,11 +675,11 @@ def ocf_promote():
     nodename = get_ocf_nodename()
     rc = ocf_monitor()
     if rc == OCF_SUCCESS:
-        # Running as slave. Normal, expected behavior.
+        # Running as standby. Normal, expected behavior.
         log_debug("{} running as a standby", RSC_INST)
     elif rc == OCF_RUNNING_MASTER:
         # Already a master. Unexpected, but not a problem.
-        log_info("{} running as a primary", RSC_INST)
+        log_info("{} running as a master", RSC_INST)
         return OCF_SUCCESS
     elif rc == OCF_NOT_RUNNING:  # INFO this is not supposed to happen.
         # Currently not running. Need to start before promoting.
@@ -695,7 +692,7 @@ def ocf_promote():
         log_info("unexpected error, cannot promote {}", RSC_INST)
         return OCF_ERR_GENERIC
     #
-    # At this point, the instance **MUST** be started as a secondary.
+    # At this point, the instance **MUST** be started as a standby.
     #
     # Cancel the switchover if it has been considered unsafe during pre-promote
     if get_ha_private_attr("cancel_switchover") == "1":
@@ -726,7 +723,7 @@ def ocf_promote():
         node_to_promote = ""
         # Get the lsn_location attribute value of the current node, as set
         # during the "pre-promote" action.
-        # It should be the greatest among the secondary instances.
+        # It should be the greatest among the standby instances.
         max_lsn = get_ha_private_attr("lsn_location")
         if max_lsn == "":
             # Should not happen since the "lsn_location" attribute should have
@@ -795,7 +792,7 @@ def is_master_recover(n):
     return n in nodes["master"] and n in nodes["promote"]
 
 
-# Check if the current transition is a recover of a slave clone on given node.
+# Check if the current transition is a recover of a standby clone on given node.
 def is_slave_recover(n):
     nodes = notify_dict["nodes"]
     return n in nodes["slave"] and n in nodes["start"]
@@ -860,7 +857,7 @@ def check_switchover():
         log_debug("XLOGDUMP parameters:  datadir: {}, last_chk: {}, tl: {}, "
                   "mast_lsn: {}", datadir, last_chk, tl, last_lsn)
         return 2
-    # force checkpoint on the slave to flush the master's
+    # force checkpoint on the standby to flush the master's
     # shutdown checkpoint to WAL
     rc = 0
     try:
@@ -877,7 +874,7 @@ def check_switchover():
         r"(:|_SHUTDOWN) redo [0-9A-F/]+; tli " + tl + r";.*; shutdown$",
         re.M | re.DOTALL)
     if rc == 0 and p.search(ans):
-        log_info("slave received shutdown checkpoint", get_pg_cluster_state())
+        log_info("standby received shutdown checkpoint", get_pg_cluster_state())
         return 0
     set_ha_private_attr("cancel_switchover", "1")
     log_info("did not received shutdown checkpoint from old master")
@@ -901,7 +898,7 @@ def notify_pre_promote():
     del_ha_private_attr("nodes")
     del_ha_private_attr("cancel_switchover")
     # check for the last received entry of WAL from the master if we are
-    # the designated slave to promote
+    # the designated standby to promote
     if is_switchover(node) and node in nodes["promote"]:
         rc = check_switchover()
         if rc == 1:
@@ -916,7 +913,7 @@ def notify_pre_promote():
             # If the sub keeps going, that means the switchover is safe.
             # Keep going with the election process in case the switchover was
             # instruct to the wrong node.
-            # FIXME: should we allow a switchover to a lagging slave?
+            # FIXME: should we allow a switchover to a lagging standby?
     # We need to trigger an election between existing slaves to promote the best
     # one based on its current LSN location. The designated standby for
     # promotion is responsible to connect to each available nodes to check their
@@ -999,10 +996,10 @@ def notify_pre_stop():
     if ocf_nodename not in notify_dict["nodes"]["stop"]:
         return OCF_SUCCESS
     rc = get_ocf_status()
-    # do nothing if this is not a slave recovery
+    # do nothing if this is not a standby recovery
     if not is_slave_recover(ocf_nodename) or rc != OCF_RUNNING_SLAVE:
         return OCF_SUCCESS
-    # in case of slave crash, we need to detect if the CRM tries to recover
+    # in case of standby crash, we need to detect if the CRM tries to recover
     # the slaveclone. The usual transition is to do: stop->start
     #
     # This transition can not work because the instance is in
@@ -1012,7 +1009,7 @@ def notify_pre_stop():
     # To avoid this, we try to start the instance in recovery from here.
     # If it succeeds, at least it will be stopped correctly with a normal
     # status. If it fails, it will be catched up in next steps.
-    log_info("pre_stop: trying to start failing slave {}", RSC_INST)
+    log_info("pre_stop: trying to start failing standby {}", RSC_INST)
     # Either the instance managed to start or it couldn't.
     # We rely on the pg_ctl '-w' switch to take care of this. If it couldn't
     # start, this error will be catched up later during the various checks
@@ -1088,11 +1085,11 @@ def ocf_validate_all():
     return OCF_SUCCESS
 
 
-# Start the PostgreSQL instance as a *secondary*
+# Start the PostgreSQL instance as a *standby*
 def ocf_start():
     rc = ocf_monitor()
     prev_state = get_pg_cluster_state()
-    # Instance must be stopped or running as secondary
+    # Instance must be stopped or running as standby
     if rc == OCF_SUCCESS:
         log_info("{} is already started", RSC_INST)
         return OCF_SUCCESS
@@ -1100,7 +1097,7 @@ def ocf_start():
         log_err("unexpected state for {} (returned {})", RSC_INST, rc)
         return OCF_ERR_GENERIC
     # From here, the instance is NOT running
-    log_debug("{} is stopped, starting it as a secondary", RSC_INST)
+    log_debug("{} is stopped, starting it as a standby", RSC_INST)
     create_recovery_conf()
     rc = pg_ctl_start()
     if rc != 0:
@@ -1113,7 +1110,7 @@ def ocf_start():
             break
         sleep(1)
     if rc != OCF_SUCCESS:
-        log_err("{} is not running as a slave (returned {})", RSC_INST, rc)
+        log_err("{} is not running as a standby (returned {})", RSC_INST, rc)
         return OCF_ERR_GENERIC
     log_info("{} started", RSC_INST)
     # Check if a master score exists in the cluster.
@@ -1132,7 +1129,7 @@ def ocf_start():
 
 # Stop the PostgreSQL instance
 def ocf_stop():
-    # Instance must be running as secondary or primary or being stopped.
+    # Instance must be running as standby or master or being stopped.
     # Anything else is an error.
     rc = ocf_monitor()
     if rc == OCF_NOT_RUNNING:
@@ -1158,7 +1155,7 @@ def ocf_monitor():
     pgisready_rc = run_pgisready()
     if pgisready_rc == 0:
         # The instance is listening.
-        # The instance is up and return if it is a primary or a secondary
+        # The instance is up and return if it is a master or a standby
         log_debug("{} is listening", RSC_INST)
         return confirm_role()
     if pgisready_rc == 1:
@@ -1179,7 +1176,7 @@ def ocf_monitor():
             pgisready_rc = run_pgisready()
             if pgisready_rc == 0:
                 # Consistent with pg_controdata output.
-                # We can check if the instance is primary or secondary
+                # We can check if the instance is master or standby
                 log_debug("{} is listening", RSC_INST)
                 return confirm_role()
             # Still not consistent, raise an error.
@@ -1225,7 +1222,7 @@ def ocf_monitor():
     return OCF_ERR_GENERIC
 
 
-# Demote the PostgreSQL instance from primary to secondary
+# Demote the PostgreSQL instance from master to standby
 # To demote a PostgreSQL instance, we must:
 #   * stop it gracefully
 #   * create recovery.conf with standby_mode = on
@@ -1235,7 +1232,7 @@ def ocf_demote():
     if rc == OCF_RUNNING_MASTER:
         log_debug("{} running as a master", RSC_INST)
     elif rc == OCF_SUCCESS:
-        log_debug("{} running as a slave", RSC_INST)
+        log_debug("{} running as a standby", RSC_INST)
         return OCF_SUCCESS
     elif rc == OCF_NOT_RUNNING:
         # Instance is stopped. Nothing to do.
@@ -1247,7 +1244,7 @@ def ocf_demote():
         return OCF_ERR_CONFIGURED
     else:
         return OCF_ERR_GENERIC
-    # TODO we need to make sure at least one slave is connected!!
+    # TODO we need to make sure at least one standby is connected!!
     # WARNING if the resource state is stopped instead of master, the ocf ra dev
     # rsc advises to return OCF_ERR_GENERIC, misleading the CRM in a loop where
     # it computes transitions of demote(failing)->stop->start->promote actions
@@ -1312,13 +1309,13 @@ if __name__ == "__main__":
         sys.exit(ocf_validate_all())
     if ACTION in ("start", "stop", "monitor", "promote", "demote", "notify"):
         ocf_validate_all()
-        if ACTION == "start":  # start as secondary only
+        if ACTION == "start":  # start as standby
             sys.exit(ocf_start())
         if ACTION == "stop":
             sys.exit(ocf_stop())
         if ACTION == "monitor":
             sys.exit(ocf_monitor())
-        if ACTION == "promote":
+        if ACTION == "promote":  # makes it a master
             sys.exit(ocf_promote())
         if ACTION == "demote":
             sys.exit(ocf_demote())
