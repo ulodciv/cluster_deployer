@@ -10,14 +10,14 @@ from datetime import datetime
 from itertools import chain
 from subprocess import call, check_output, CalledProcessError, STDOUT
 from collections import defaultdict, namedtuple, OrderedDict
-from distutils.version import StrictVersion
+from distutils.version import LooseVersion
 from functools import partial
 from tempfile import gettempdir
 from time import sleep
 
 VERSION = "1.0"
 PROGRAM = "pgsqlha"
-MIN_PG_VER = StrictVersion('9.5')
+MIN_PG_VER = LooseVersion('9.5')
 OCF_SUCCESS = 0
 OCF_RUNNING_SLAVE = OCF_SUCCESS
 OCF_ERR_GENERIC = 1
@@ -1037,7 +1037,7 @@ def ocf_validate_all():
         log_crit("Can't read PG version file: {}", pgver_file, e)
         sys.exit(OCF_ERR_ARGS)
     try:
-        ver = StrictVersion(ver)
+        ver = LooseVersion(ver)
     except:
         log_crit("Can't parse PG version: {}", ver)
         sys.exit(OCF_ERR_ARGS)
