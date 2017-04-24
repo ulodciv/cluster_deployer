@@ -29,8 +29,8 @@ OCF_ERR_CONFIGURED = 6
 OCF_NOT_RUNNING = 7
 OCF_RUNNING_MASTER = 8
 OCF_FAILED_MASTER = 9
-RS = chr(30)  # RS (record separator)
-FS = chr(3)  # ETX (end of text)
+RS = chr(30)  # record separator
+FS = chr(3)  # end of text
 RE_WAL_LEVEL = r"^wal_level setting:\s+(.*?)\s*$"
 RE_TPL_TIMELINE = r"^\s*recovery_target_timeline\s*=\s*'?latest'?\s*$"
 RE_STANDBY_MODE = r"^\s*standby_mode\s*=\s*'?on'?\s*$"

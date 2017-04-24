@@ -1,6 +1,8 @@
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path, PurePosixPath
+from subprocess import run, PIPE
 from ipaddress import ip_interface, IPv4Interface, IPv4Address
 
 from paramiko import RSAKey
@@ -18,14 +20,41 @@ def raise_first(futures):
 
 class Cluster:
 
+    @staticmethod
+    def configure_logging():
+        logging.basicConfig(format='%(relativeCreated)d %(name)s: %(message)s')
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger("paramiko").setLevel(logging.WARNING)
+
+    @staticmethod
+    def find_vboxmanage():
+        res = run("where vboxmanage.exe", stdout=PIPE, stderr=PIPE)
+        if not res.returncode:
+            return res.stdout.decode().strip()
+        f = r"C:\Program Files\Oracle\VirtualBox\vboxmanage.exe"
+        try:
+            if not run([f, "-v"], stdout=PIPE, stderr=PIPE).returncode:
+                return f
+        except FileNotFoundError:
+            pass
+        try:
+            run(["vboxmanage.exe", "-v"], stdout=PIPE, stderr=PIPE)
+            return "vboxmanage.exe"
+        except FileNotFoundError:
+            raise DeployerError("can't find vboxmanage.exe: is VBox installed?")
+
     def __init__(self, vboxmanage, cluster_def, no_threads=False):
+        self.configure_logging()
         self.ha_cluster_xml_file = f"cluster.xml"
         self.cluster_name = cluster_def["cluster_name"]
         self.virtual_ip = cluster_def["virtual_ip"]
         self.demo_db = cluster_def["demo_db"]
         self.pg_ra = cluster_def["pg_ra"]
         common = {k: v for k, v in cluster_def.items() if k != "hosts"}
-        common["vboxmanage"] = vboxmanage
+        if vboxmanage:
+            common["vboxmanage"] = vboxmanage
+        else:
+            common["vboxmanage"] = self.find_vboxmanage()
         common["paramiko_key"] = RSAKey.from_private_key_file(
             common["key_file"])
         with open(common["pub_key_file"]) as f:

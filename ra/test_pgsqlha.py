@@ -88,10 +88,6 @@ def run_as_pg(cmd, check=True):
                 preexec_fn=change_user_to_postgres)
 
 
-class TestMasterScenarios(unittest.TestCase):
-    pass
-    
-
 class TestPg(unittest.TestCase):
 
     @classmethod
@@ -283,9 +279,6 @@ primary_conninfo = 'port={}'
             RA.MIN_PG_VER = ver_backup
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
 
-    def test_demote_failed_master(self):
-        pass
-
 
 class TestHa(unittest.TestCase):
 
@@ -364,10 +357,6 @@ pg_control last modified:             Fri 31 Mar 2017 10:01:29 PM CEST
         m = re.findall(RA.RE_PG_CLUSTER_STATE, TestRegExes.cluster_state, re.M)
         self.assertIsNotNone(m)
         self.assertEqual(m[0], "in production")
-
-    # def test_val_level(self):
-    #     s = ""
-    #     m = re.findall(RA.RE_WAL_LEVEL, s, re.M)
 
 if __name__ == '__main__':
     unittest.main()
