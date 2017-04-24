@@ -328,6 +328,7 @@ def pg_execute(query):
         return e.returncode, []
     finally:
         os.remove(tmp_filename)
+    log_debug("executed query:\n{}", query)
     rs = []
     if ans:
         ans = ans[:-1]
@@ -353,24 +354,23 @@ def get_connected_standbies():
     # master, then the lowest node name (alphanumeric sort) in case of equality.
     # The result set itself is order by priority DESC to process best known
     # candidate first.
-    query = """
-      SELECT application_name, priority, location, state
-      FROM (
-        SELECT application_name,
-          1000 - (
-            row_number() OVER (
-              PARTITION BY state IN ('startup', 'backup')
-              ORDER BY write_location ASC, application_name ASC
-            ) - 1
-          ) * 10 AS priority,
-          write_location AS location, state
-        FROM (
-          SELECT application_name, write_location, state
-          FROM pg_stat_replication
-        ) AS s2
-      ) AS s1
-      ORDER BY priority DESC
-    """
+    query = """\
+SELECT application_name, priority, location, state
+FROM (
+    SELECT application_name,
+    1000 - (
+        row_number() OVER (
+            PARTITION BY state IN ('startup', 'backup')
+            ORDER BY write_location ASC, application_name ASC
+        ) - 1
+    ) * 10 AS priority,
+    write_location AS location, state
+    FROM (
+        SELECT application_name, write_location, state
+        FROM pg_stat_replication
+    ) AS s2
+) AS s1
+ORDER BY priority DESC"""
     rc, rs = pg_execute(query)
     if rc != 0:
         log_err("query to get standby locations failed ({})", rc)

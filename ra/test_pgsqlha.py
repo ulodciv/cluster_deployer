@@ -39,12 +39,12 @@ os.chdir(gettempdir())
 
 PGUSER = "postgres"
 PGUSER_UID, PGUSER_GID = pwd.getpwnam(PGUSER)[2:4]
-UNAME = subprocess.check_output("UNAME -n", shell=True).strip()
+UNAME = subprocess.check_output("uname -n", shell=True).strip()
 PGDATA_MASTER = "/tmp/pgsqlha_test_master"
 PGDATA_SLAVE = "/tmp/pgsqlha_test_slave"
 PGPORT_MASTER = "15432"
 PGPORT_SLAVE = "15433"
-PGSTART_OPTS = "'-c config_file={}/postgresql.conf'".format(PGBIN)
+PGSTART_OPTS = "'-c config_file={}/postgresql.conf'"
 TPL = """\
 standby_mode = on
 recovery_target_timeline = latest
@@ -97,7 +97,7 @@ class TestPg(unittest.TestCase):
     @classmethod
     def start_pg(cls, pgdata):
         run_as_pg("{}/pg_ctl start -D {} -o {} -w".format(
-            PGBIN, pgdata, PGSTART_OPTS))
+            PGBIN, pgdata, PGSTART_OPTS.format(pgdata)))
 
     @classmethod
     def start_pg_master(cls):
