@@ -1,5 +1,6 @@
 import json
 import unittest
+from time import sleep
 
 import deployer
 
@@ -35,23 +36,60 @@ cluster_json = """\
 """
 
 
-class TestDemoteMaster(unittest.TestCase):
-    pass
-
-
 class TestDeployer(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cluster = deployer.Cluster(None, json.loads(cluster_json))
-        cluster.deploy()
+        pass
 
     @classmethod
     def tearDownClass(cls):
         pass
 
     def setUp(self):
-        pass
+        self.cluster = deployer.Cluster(None, json.loads(cluster_json))
+        self.cluster.deploy()
+        sleep(40)
 
-    def test1(self):
-        self.assertTrue(True)
+    # def tearDown(self):
+    #     for vm in self.cluster.vms:
+    #         try:
+    #             print(vm.vm_poweroff())
+    #         except Exception as e:
+    #             print(f"exception during power off:\n{e}")
+    #         sleep(2)  # seems like this is necessary...
+    #         try:
+    #             print(vm.vm_delete())
+    #         except Exception as e:
+    #             print(f"exception during delete:\n{e}")
+
+    def test_kill_master(self):
+        """
+        Action: poweroff standbies
+        Action: run some update SQL on master
+        Action: poweroff master
+        Action: poweron standbies
+        Action: pcs cluster start standby1, standby2
+        Check: a standby became Master
+        Action: poweron Master
+        Action: pcs cluster start <previous master>
+        Check: replication from previous master works ok again
+        """
+        db = "demo_db"
+        master = self.cluster.master
+        master.pg_execute(
+            "update person.addresstype "
+            "set name='test12' where addresstypeid=1", db=db)
+        o, e = master.pg_execute(
+                          "select name from person.addresstype "
+                          "where addresstypeid=1", db=db)
+        self.assertIn('test12', o.read().decode())
+        # for standby in self.cluster.standbies:
+        #     standby.vm_poweroff()
+        master.pg_execute(
+            "update person.addresstype "
+            "set name='test123' where addresstypeid=1", db=db)
+
+
+    # def test_foo(self):
+    #     self.cluster.master.pg_execute("update")

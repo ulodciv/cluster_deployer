@@ -127,9 +127,12 @@ class Postgres(Ssh, metaclass=ABCMeta):
     def _pg_add_to_pcmk_recovery_conf(self, param, val):
         self._pg_add_to_conf(param, val, self.pg_pcmk_recovery_file)
 
-    def pg_execute(self, sql, user=None):
-        c = f'psql -c "{sql};"'
-        self.ssh_run_check(c, user if user else self.pg_user)
+    def pg_execute(self, sql, *, db=None):
+        db = f"-d {db} " if db else ""
+        c = f'psql {db}-c "{sql};"'
+        o, e = self.ssh_run_check(c, self.pg_user)
+        return o, e
+        return o.read().decode().strip()
 
     def pg_create_db(self, db: str):
         self.ssh_run_check(f"createdb {db}", self.pg_user)

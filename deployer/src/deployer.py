@@ -139,7 +139,6 @@ class Cluster:
         self.ha_add_pg_to_xml()
         self.ha_add_pg_vip_to_xml()
         self.ha_cib_push()
-        # self.master.ha_create_vip()
 
     def ha_base_setup(self, vms):
         """
@@ -162,12 +161,6 @@ class Cluster:
             return ip_interface(self.virtual_ip)
         return IPv4Interface(self.virtual_ip + "/24")
 
-    def ha_create_vip(self):
-        ipv4 = self.ha_get_vip_ipv4()
-        self.master.ssh_run_check(
-            f"pcs resource create ClusterVIP ocf:heartbeat:IPaddr2 "
-            f"ip={ipv4.ip} cidr_netmask={ipv4.network.prefixlen}")
-
     def ha_drop_vip(self):
         self.master.ssh_run_check(f"pcs resource delete ClusterVIP")
 
@@ -189,10 +182,12 @@ class Cluster:
         self.master.ssh_run_check(
             f"pcs cluster cib {self.ha_cluster_xml_file}")
 
+    def _ha_pcs_xml(self, what):
+        self.master.ssh_run_check(f"pcs -f {self.ha_cluster_xml_file} {what}")
+
     def ha_add_pg_to_xml(self):
         master = self.master
-        master.ssh_run_check(
-            f"pcs -f {self.ha_cluster_xml_file} "
+        self._ha_pcs_xml(
             f"resource create pgsqld ocf:heartbeat:pgsqlha "
             f"bindir={master.pg_bindir} "
             f"pgdata={master.pg_data_directory} "
@@ -204,26 +199,22 @@ class Cluster:
             f"op monitor interval=15s timeout=10s role=\"Master\" "
             f"op monitor interval=16s timeout=10s role=\"Slave\" "
             f"op notify timeout=60s")
-        master.ssh_run_check(
-            f"pcs -f {self.ha_cluster_xml_file} "
-            f"resource master pgsql-ha pgsqld "
-            f"clone-max=3 "
-            f"notify=true")
+        self._ha_pcs_xml(
+            f"resource master pgsql-ha pgsqld clone-max=3 notify=true")
 
     def ha_add_pg_vip_to_xml(self):
         ipv4 = self.ha_get_vip_ipv4()
-        self.master.ssh_run_check(
-            f"pcs -f {self.ha_cluster_xml_file} "
+        self._ha_pcs_xml(
             f"resource create pgsql-master-ip ocf:heartbeat:IPaddr2 "
             f"ip={ipv4.ip} cidr_netmask={ipv4.network.prefixlen}")
-        self.master.ssh_run_check(
-            f"pcs -f {self.ha_cluster_xml_file} constraint colocation add "
+        self._ha_pcs_xml(
+            f"constraint colocation add "
             f"pgsql-master-ip with master pgsql-ha INFINITY")
-        self.master.ssh_run_check(
-            f"pcs -f {self.ha_cluster_xml_file} constraint order promote "
+        self._ha_pcs_xml(
+            f"constraint order promote "
             f"pgsql-ha then start pgsql-master-ip symmetrical=false")
-        self.master.ssh_run_check(
-            f"pcs -f {self.ha_cluster_xml_file} constraint order demote "
+        self._ha_pcs_xml(
+            f"constraint order demote "
             f"pgsql-ha then stop pgsql-master-ip symmetrical=false")
 
     def ha_cib_push(self):

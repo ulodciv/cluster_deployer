@@ -25,6 +25,14 @@ class VmBase(metaclass=ABCMeta):
         pass
 
     @abstractmethod
+    def vm_poweroff(self):
+        pass
+
+    @abstractmethod
+    def vm_delete(self):
+        pass
+
+    @abstractmethod
     def vm_start_and_get_ip(self, fail_if_already_running=True):
         pass
 
@@ -42,6 +50,12 @@ class VmWare(VmBase):
         pass
 
     def vm_start_and_get_ip(self, fail_if_already_running=True):
+        pass
+
+    def vm_poweroff(self):
+        pass
+
+    def vm_delete(self):
         pass
 
 
@@ -119,6 +133,12 @@ class Vbox(VmBase):
         vmdk = self.get_vbox_machine_dir() / name / f"{name}.vmdk"
         self.run_vboxmanage(f'import {self.ova} --vsys 0 --vmname {name} '
                             f'--unit {self.get_disk_unit()} --disk "{vmdk}"')
+
+    def vm_poweroff(self):
+        return self.run_vboxmanage(f"controlvm {self.name} poweroff")
+
+    def vm_delete(self):
+        return self.run_vboxmanage(f"unregistervm {self.name} --delete")
 
     def _del_ip_property(self):
         self.run_vboxmanage(f'guestproperty delete {self.name} {self.IP_PROP}')
