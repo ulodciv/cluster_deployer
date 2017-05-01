@@ -1,14 +1,15 @@
 #!/usr/bin/python2.7
 import os
+import pwd
 import re
 import subprocess
-from distutils.version import StrictVersion
-from tempfile import gettempdir
-
-import pwd
-from subprocess import check_call, call
 import unittest
 import xml.etree.ElementTree as ET
+from distutils.version import StrictVersion
+from tempfile import gettempdir
+from subprocess import check_call, call
+
+import pgsqlha as RA
 
 
 # returns CENTOS, UBUNTU, DEBIAN, or something else
@@ -19,8 +20,8 @@ def get_distro():
     return p.findall(s)[0].upper()
 
 
-os.environ['OCF_RESOURCE_INSTANCE'] = "foo"
 pgversion = "9.6"
+os.environ['OCF_RESOURCE_INSTANCE'] = "foo"
 linux_distro = get_distro()
 if linux_distro == "CENTOS":
     PGBIN = "/usr/pgsql-{}/bin".format(pgversion)
@@ -29,13 +30,7 @@ elif linux_distro in ("DEBIAN", "UBUNTU"):
 else:
     raise Exception("unknown linux distro: " + linux_distro)
 os.environ['OCF_RESKEY_bindir'] = PGBIN
-
-
-import pgsqlha as RA
-
-
 os.chdir(gettempdir())
-
 
 PGUSER = "postgres"
 PGUSER_UID, PGUSER_GID = pwd.getpwnam(PGUSER)[2:4]
@@ -77,15 +72,9 @@ def write_as_pg(f, s):
 
 def run_as_pg(cmd, check=True):
     print("run_as_pg: " + cmd)
-    with open(os.devnull, 'w') as DEVNULL:
-        if check:
-            return check_call(
-                cmd, shell=True, cwd="/tmp",
-                preexec_fn=change_user_to_postgres)
-        else:
-            return call(
-                cmd, shell=True, cwd="/tmp",
-                preexec_fn=change_user_to_postgres)
+    to_call = check_call if check else call
+    return to_call(
+        cmd, shell=True, cwd="/tmp", preexec_fn=change_user_to_postgres)
 
 
 class TestPg(unittest.TestCase):
@@ -317,16 +306,12 @@ class TestHa(unittest.TestCase):
         self.assertEqual(len(methods), 9)
         self.assertIn("notify", methods)
 
-    # def test_monitor_of_failing_to_stream_slave(self):
-    #     pass
-
     def test_get_notify_dict(self):
         os.environ['OCF_RESKEY_CRM_meta_notify_type'] = "pre"
         os.environ['OCF_RESKEY_CRM_meta_notify_operation'] = "promote"
         os.environ['OCF_RESKEY_CRM_meta_notify_start_uname'] = "node1 node2"
         os.environ['OCF_RESKEY_CRM_meta_notify_stop_uname'] = "node3 node4"
-        RA.set_notify_dict()
-        d = RA.notify_dict
+        d = RA.get_notify_dict()
         self.assertEqual(["node1", "node2"], d["nodes"]["start"])
         import json
         print(json.dumps(d, indent=4))
