@@ -29,8 +29,6 @@ OCF_ERR_CONFIGURED = 6
 OCF_NOT_RUNNING = 7
 OCF_RUNNING_MASTER = 8
 OCF_FAILED_MASTER = 9
-RS = chr(30)  # record separator
-FS = chr(3)  # end of text
 RE_WAL_LEVEL = r"^wal_level setting:\s+(.*?)\s*$"
 RE_TPL_TIMELINE = r"^\s*recovery_target_timeline\s*=\s*'?latest'?\s*$"
 RE_STANDBY_MODE = r"^\s*standby_mode\s*=\s*'?on'?\s*$"
@@ -296,26 +294,27 @@ def run_pgisready():
 
 def as_postgres(cmd):
     cmd = [str(c) for c in cmd]
-    log_debug("as {}; {}", get_pguser(), " ".join(cmd))
+    log_debug("as {}: {}", get_pguser(), " ".join(cmd))
     with open(os.devnull, "w") as DEVNULL:
         return call(
             cmd, preexec_fn=as_postgres_user, stdout=DEVNULL, stderr=STDOUT)
 
 
 def pg_execute(query):
-    connstr = "dbname=postgres"
+    RS = chr(30)  # record separator
+    FS = chr(3)  # end of text
     try:
-        tmp_fh, tmp_filename = tempfile.mkstemp(prefix="pgsqlms-")
+        tmp_fh, tmp_file = tempfile.mkstemp(prefix="pgsqlms-")
         os.write(tmp_fh, query)
         os.close(tmp_fh)
-        os.chmod(tmp_filename, 0o644)
+        os.chmod(tmp_file, 0o644)
     except:
         log_crit("could not create or write in a temp file")
         sys.exit(OCF_ERR_INSTALLED)
     try:
         cmd = [
-            get_psql(), "-v", "ON_ERROR_STOP=1", "-qXAtf", tmp_filename, "-R",
-            RS, "-F", FS, "-p", get_pgport(), "-h", get_pghost(), connstr]
+            get_psql(), "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-qXAtf",
+            tmp_file, "-R", RS, "-F", FS, "-p", get_pgport(), "-h", get_pghost()]
         log_debug(" ".join(cmd).replace(RS, "<RS>").replace(FS, "<FS>"))
         ans = check_output(cmd, preexec_fn=as_postgres_user)
     except CalledProcessError as e:
@@ -327,7 +326,7 @@ def pg_execute(query):
         #   3: query failed
         return e.returncode, []
     finally:
-        os.remove(tmp_filename)
+        os.remove(tmp_file)
     log_debug("executed query:\n{}", query)
     rs = []
     if ans:
@@ -658,9 +657,7 @@ def _master_score_exists():
     return False
 
 
-# Set the given attribute name to the given value.
-# As setting an attribute is asynchronous, this will return as soon as the
-# attribute is really set by attrd and available everywhere.
+# Setting attributes is asynchronous, so return as soon as truly done
 def set_master_score(score, node=None):
     cmd = [get_crm_master(), "-q", "-v", score]
     if node:

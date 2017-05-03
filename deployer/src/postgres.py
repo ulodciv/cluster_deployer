@@ -1,3 +1,4 @@
+import shlex
 from abc import ABCMeta
 from pathlib import PurePosixPath
 from threading import Lock
@@ -127,12 +128,14 @@ class Postgres(Ssh, metaclass=ABCMeta):
     def _pg_add_to_pcmk_recovery_conf(self, param, val):
         self._pg_add_to_conf(param, val, self.pg_pcmk_recovery_file)
 
-    def pg_execute(self, sql, *, db=None):
-        db = f"-d {db} " if db else ""
-        c = f'psql {db}-c "{sql};"'
-        o, e = self.ssh_run_check(c, self.pg_user)
+    def pg_execute(self, sql, *, db="postgres"):
+        RS = r'\036'  # record separator
+        FS = r'\003'  # end of text
+        cmd = [
+            "psql", "-d", db, "-v", "ON_ERROR_STOP=1", "-qXAt", "-R", RS,
+            "-F", FS, "-c", f'"{sql};"']
+        o, e = self.ssh_run_check(" ".join(cmd), self.pg_user)
         return o, e
-        return o.read().decode().strip()
 
     def pg_create_db(self, db: str):
         self.ssh_run_check(f"createdb {db}", self.pg_user)

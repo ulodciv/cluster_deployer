@@ -65,15 +65,15 @@ class TestDeployer(unittest.TestCase):
 
     def test_kill_master(self):
         """
-        Action: poweroff standbies
-        Action: run some update SQL on master
+        Action: poweroff standbies and immediately 
+        run some update SQL on master
         Action: poweroff master
         Action: poweron standbies
         Action: pcs cluster start standby1, standby2
         Check: a standby became Master
         Action: poweron Master
         Action: pcs cluster start <previous master>
-        Check: replication from previous master works ok again
+        Check: replication from previous master works again
         """
         db = "demo_db"
         master = self.cluster.master
@@ -81,15 +81,13 @@ class TestDeployer(unittest.TestCase):
             "update person.addresstype "
             "set name='test12' where addresstypeid=1", db=db)
         o, e = master.pg_execute(
-                          "select name from person.addresstype "
-                          "where addresstypeid=1", db=db)
+            "select name from person.addresstype where addresstypeid=1", db=db)
         self.assertIn('test12', o.read().decode())
+
+        for standby in self.cluster.standbies:
+            standby.pg_execute()
         # for standby in self.cluster.standbies:
         #     standby.vm_poweroff()
         master.pg_execute(
             "update person.addresstype "
             "set name='test123' where addresstypeid=1", db=db)
-
-
-    # def test_foo(self):
-    #     self.cluster.master.pg_execute("update")
