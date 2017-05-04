@@ -1,4 +1,3 @@
-import shlex
 from abc import ABCMeta
 from pathlib import PurePosixPath
 from threading import Lock
@@ -73,8 +72,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
 
     def pg_current_setting2(self, setting) -> str:
         c = f'psql -t -c "select current_setting(\'{setting}\');"'
-        o, e = self.ssh_run_check(c, self.pg_user)
-        return o.read().decode('utf-8').strip()
+        o = self.ssh_run_check(c, user=self.pg_user, return_output=True)
+        return o.strip()
 
     def pg_current_setting(self, setting):
         ret = None
@@ -120,7 +119,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             conf_file = self.pg_config_file
         self.ssh_run_check(
             f'echo "{param} = \'{val}\'" >> {conf_file}',
-            self.pg_user)
+            user=self.pg_user)
 
     def _pg_add_to_recovery_conf(self, param, val):
         self._pg_add_to_conf(param, val, self.pg_recovery_file)
@@ -129,24 +128,30 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self._pg_add_to_conf(param, val, self.pg_pcmk_recovery_file)
 
     def pg_execute(self, sql, *, db="postgres"):
-        RS = r'\036'  # record separator
-        FS = r'\003'  # end of text
-        cmd = [
-            "psql", "-d", db, "-v", "ON_ERROR_STOP=1", "-qXAt", "-R", RS,
-            "-F", FS, "-c", f'"{sql};"']
-        o, e = self.ssh_run_check(" ".join(cmd), self.pg_user)
-        return o, e
+        rs, rs_bash = chr(30), r'\036'  # record separator
+        fs, fs_bash = chr(3), r'\003'  # end of text
+        cmd = ["psql", "-d", db, "-v", "ON_ERROR_STOP=1", "-qXAt",
+               "-R", rs_bash, "-F", fs_bash, "-c", f'"{sql};"']
+        o = self.ssh_run_check(
+            " ".join(cmd), user=self.pg_user, return_output=True)
+        if o:
+            ans = o[:-1]
+            res = []
+            for record in ans.split(rs):
+                res.append(record.split(fs))
+            self.log(f"pg_execute results:\n{res}")
+            return res
 
     def pg_create_db(self, db: str):
-        self.ssh_run_check(f"createdb {db}", self.pg_user)
+        self.ssh_run_check(f"createdb {db}", user=self.pg_user)
 
     def pg_drop_db(self, db: str):
-        self.ssh_run(f"dropdb {db}", self.pg_user)
+        self.ssh_run(f"dropdb {db}", user=self.pg_user)
 
     def pg_create_replication_user(self):
         self.ssh_run_check(
             f'createuser {self.pg_repl_user} -c 5 --replication',
-            self.pg_user)
+            user=self.pg_user)
 
     def pg_make_master(self, all_hosts):
         """
@@ -207,7 +212,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             f"mv {master.pg_data_directory} data_old",
             f"pg_basebackup -h {master.name} -D {master.pg_data_directory} "
             f"-U {master.pg_repl_user} -Xs"],
-            self.pg_user)
+            user=self.pg_user)
 
         """
         # self._pg_add_to_conf("hot_standby", "on")
@@ -224,11 +229,11 @@ class Postgres(Ssh, metaclass=ABCMeta):
         # self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
         self.ssh_run_check(
             f"sed -i s/{master.name}/{self.name}/ {master.pg_pcmk_recovery_file}",
-            self.pg_user)
+            user=self.pg_user)
         self.ssh_run_check(
             f"cp {master.pg_pcmk_recovery_file} "
             f"{master.pg_recovery_file}",
-            self.pg_user)
+            user=self.pg_user)
 
     def pg_create_user(self, user, super_user=False):
         attribs = " SUPERUSER" if super_user else ""
@@ -238,7 +243,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_execute(f"DROP USER {user}")
 
     def pg_create_wal_dir(self):
-        self.ssh_run_check('mkdir -p wals_from_this', self.pg_user)
+        self.ssh_run_check('mkdir -p wals_from_this', user=self.pg_user)
 
     def pg_stop(self):
         self.ssh_run_check(f"systemctl stop {self.pg_service}")

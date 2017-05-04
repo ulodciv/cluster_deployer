@@ -37,6 +37,7 @@ cluster_json = """\
 
 
 class TestDeployer(unittest.TestCase):
+    DB = "demo_db"
 
     @classmethod
     def setUpClass(cls):
@@ -63,6 +64,29 @@ class TestDeployer(unittest.TestCase):
     #         except Exception as e:
     #             print(f"exception during delete:\n{e}")
 
+    def test_simple_replication(self):
+        master = self.cluster.master
+
+        master.pg_execute(
+            "update person.addresstype "
+            "set name='test12' where addresstypeid=1", db=self.DB)
+        select_sql = "select name from person.addresstype where addresstypeid=1"
+        rs = master.pg_execute(select_sql, db=self.DB)
+        self.assertEqual('test12', rs[0][0])
+        sleep(0.5)
+        for standby in self.cluster.standbies:
+            rs = standby.pg_execute(select_sql, db=self.DB)
+            self.assertEqual('test12', rs[0][0])
+
+        master.pg_execute(
+            "update person.addresstype "
+            "set name='foo' where addresstypeid=1", db=self.DB)
+        sleep(0.5)
+        for standby in self.cluster.standbies:
+            rs = standby.pg_execute(select_sql, db=self.DB)
+            self.assertEqual('foo', rs[0][0])
+
+    @unittest.skip("WIP")
     def test_kill_master(self):
         """
         Action: poweroff standbies and immediately 
@@ -79,15 +103,16 @@ class TestDeployer(unittest.TestCase):
         master = self.cluster.master
         master.pg_execute(
             "update person.addresstype "
-            "set name='test12' where addresstypeid=1", db=db)
-        o, e = master.pg_execute(
-            "select name from person.addresstype where addresstypeid=1", db=db)
-        self.assertIn('test12', o.read().decode())
-
+            "set name='test12' where addresstypeid=1", db=self.DB)
+        select_sql = "select name from person.addresstype where addresstypeid=1"
+        rs = master.pg_execute(select_sql, db=self.DB)
+        self.assertEqual('test12', rs[0][0])
+        sleep(0.5)
         for standby in self.cluster.standbies:
-            standby.pg_execute()
+            rs = standby.pg_execute(select_sql, db=self.DB)
+            self.assertEqual('test12', rs[0][0])
         # for standby in self.cluster.standbies:
         #     standby.vm_poweroff()
         master.pg_execute(
             "update person.addresstype "
-            "set name='test123' where addresstypeid=1", db=db)
+            "set name='test123' where addresstypeid=1", db=self.db)

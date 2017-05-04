@@ -115,7 +115,7 @@ class Cluster:
                 f'echo "host replication {h.pg_repl_user} {h.ip}/32 trust" ' 
                 f'>> {hba_file}'
                 for h in self.vms]
-            vm.ssh_run_check(cmds, vm.pg_user)
+            vm.ssh_run_check(cmds, user=vm.pg_user)
         master.pg_make_master(self.vms)
         master.pg_restart()
         _ = master.pg_config_file
@@ -243,11 +243,11 @@ class Vm(Vbox, Postgres):
         db = local_db_file.stem
         self.ssh_run_check(
             f"cd /tmp && tar -xf {db_file_name} && rm -f {db_file_name}",
-            self.pg_user)
+            user=self.pg_user)
         self.pg_drop_db(db)
         self.pg_create_db(db)
         self.ssh_run_check(
             f"cd /tmp/{db} && psql -v ON_ERROR_STOP=1 -t -q "
             f"-f install.sql {db}",
-            self.pg_user)
+            user=self.pg_user)
         self.ssh_run_check(f'rm -rf /tmp/{db}')

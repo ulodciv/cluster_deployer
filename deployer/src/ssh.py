@@ -88,10 +88,10 @@ class Ssh(Linux, metaclass=ABCMeta):
         auth_keys_file = PurePosixPath("/root/.ssh/authorized_keys")
         with self.get_lock_for_file(auth_keys_file):
             with self.ssh_root_with_password() as ssh:
-                self.ssh_run_("root", ssh, f'mkdir -p .ssh', True)
-                self.ssh_run_("root", ssh, f'touch {auth_keys_file}', True)
-                self.ssh_run_("root", ssh, f'chmod 700 .ssh', True)
-                self.ssh_run_("root", ssh, f'chmod 600 {auth_keys_file}', True)
+                self.ssh_run_("root", ssh, f'mkdir -p .ssh', check=True)
+                self.ssh_run_("root", ssh, f'touch {auth_keys_file}', check=True)
+                self.ssh_run_("root", ssh, f'chmod 700 .ssh', check=True)
+                self.ssh_run_("root", ssh, f'chmod 600 {auth_keys_file}', check=True)
                 sftp = ssh.open_sftp()
                 with sftp.file(str(auth_keys_file)) as f:
                     keys_str = f.read().decode('utf-8')
@@ -166,15 +166,13 @@ class Ssh(Linux, metaclass=ABCMeta):
     def _connect_to_add_fingerprint(self, other, user):
         self.ssh_run_check(
             [f"ssh -o StrictHostKeyChecking=no {other.ip} true",
-             f"ssh -o StrictHostKeyChecking=no {other.name} true"],
-            user)
+             f"ssh -o StrictHostKeyChecking=no {other.name} true"], user=user)
 
     def _create_rsa_key_pair(self, user):
         self.ssh_run_check(
             ["ssh-keygen -q -t rsa -N '' -f .ssh/id_rsa",
              "chmod 700 .ssh",
-             "chmod 600 .ssh/id_rsa"],
-            user)
+             "chmod 600 .ssh/id_rsa"], user=user)
 
     def get_pub_key(self, user):
         user_obj = self.users[user]
@@ -230,7 +228,8 @@ class Ssh(Linux, metaclass=ABCMeta):
         with self.open_ssh(user) as ssh:
             yield ssh.open_sftp()
 
-    def ssh_run_(self, user, ssh, command, check):
+    def ssh_run_(self, user, ssh, command, *,
+                 check=False, return_output=True):
         self.log(f"{user}: [{command}]")
         try:
             i, o, e = ssh.exec_command(command)
@@ -238,26 +237,37 @@ class Ssh(Linux, metaclass=ABCMeta):
             raise DeployerError(
                 f"{user}@{self.name}: SSHException for:\n"
                 f"{command}\non {self.name}:\n{e}")
+        if return_output:
+            stdout = o.read().decode()
         if check:
+            stderr = e.read().decode()
             exit_status = o.channel.recv_exit_status()
             if exit_status != 0:
                 raise DeployerError(
                     f"{user}@{self.name}: got exit status {exit_status} for:\n"
                     f"{command}\n"
-                    f"stdout: {o.read().decode('utf-8')}\n"
-                    f"stderr: {e.read().decode('utf-8')}")
-        return o, e
+                    f"stderr: {stderr}")
+        if return_output:
+            return stdout
 
-    def ssh_run(self, command_or_commands, user="root", check=False):
+    def ssh_run(self, command_or_commands, *,
+                user="root", check=False, return_output=False):
         with self.open_ssh(user) as ssh:
             if type(command_or_commands) is str:
-                return self.ssh_run_(user, ssh, command_or_commands, check)
+                return self.ssh_run_(user, ssh, command_or_commands,
+                                     check=check, return_output=return_output)
             else:
+                ret = []
                 for command in command_or_commands:
-                    self.ssh_run_(user, ssh, command, check)
+                    ret.append(self.ssh_run_(
+                        user, ssh, command,
+                        check=check, return_output=return_output))
+                return ret
 
-    def ssh_run_check(self, command_or_commands, user="root"):
-        return self.ssh_run(command_or_commands, user, True)
+    def ssh_run_check(self, command_or_commands, *,
+                      user="root", return_output=False):
+        return self.ssh_run(command_or_commands,
+                            user=user, check=True, return_output=return_output)
 
     def add_hosts_to_etc_hosts(self, vms):
         hosts_file = PurePosixPath("/etc/hosts")

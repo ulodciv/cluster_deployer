@@ -49,11 +49,13 @@ class Linux(VmBase, metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def ssh_run(self, command_or_commands, user="root", check=False):
+    def ssh_run(self, command_or_commands, *,
+                user="root", check=False, return_output=False):
         pass
 
     @abstractmethod
-    def ssh_run_(self, user, ssh, command, check):
+    def ssh_run_(self, user, ssh, command, *,
+                 check=False, return_output=True):
         pass
 
     @abstractmethod
@@ -62,7 +64,8 @@ class Linux(VmBase, metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def ssh_run_check(self, command_or_commands, user="root"):
+    def ssh_run_check(self, command_or_commands, *,
+                      user="root", return_output=False):
         pass
 
     @abstractmethod
@@ -108,7 +111,7 @@ class Linux(VmBase, metaclass=ABCMeta):
 
     def add_user(self, user, pwd=None):
         with self.ssh_root_with_password() as ssh:
-            self.ssh_run_("root", ssh, f"useradd -m {user}", True)
+            self.ssh_run_("root", ssh, f"useradd -m {user}", check=True)
             if not pwd:
                 return
             self.ssh_run_(
@@ -117,22 +120,22 @@ class Linux(VmBase, metaclass=ABCMeta):
                 (f"chpasswd << END\n"
                  f"{user}:{pwd}\n"
                  f"END"),
-                True)
+                check=True)
 
     def _get_user_home_dir(self, user_obj):
         with self.ssh_root_with_password() as ssh:
-            o, e = self.ssh_run_(
+            o = self.ssh_run_(
                 "root",
                 ssh,
                 f"getent passwd {user_obj.user}",
-                True)
-            user_obj.home_dir = o.read().decode().split(":")[5]
+                check=True,
+                return_output=True)
+            user_obj.home_dir = o.split(":")[5]
 
     def selinux_is_active(self):
         if self._selinux_is_active is None:
-            o, e = self.ssh_run_check("getenforce")
-            self._selinux_is_active = (
-                o.read().decode().strip().lower() == "enforcing")
+            o = self.ssh_run_check("getenforce", return_output=True)
+            self._selinux_is_active = o.strip().lower() == "enforcing"
         return self._selinux_is_active
 
     def setup_users(self):
@@ -176,7 +179,7 @@ class Linux(VmBase, metaclass=ABCMeta):
                     """,
                     re.X | re.M)
                 s = stdout.read()
-                self._iface = p.findall(s.decode("utf-8"))[0]
+                self._iface = p.findall(s.decode())[0]
         return self._iface
 
     def add_temp_ipv4_to_iface(self, ipv4: IPv4Interface):
