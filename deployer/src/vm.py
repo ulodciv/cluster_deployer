@@ -16,12 +16,29 @@ class VmBase(metaclass=ABCMeta):
         self.name = name
         self.ova = ova
         self.logger = logging.getLogger(self.name)
+        self._snapshots = []
 
     def log(self, msg: str):
         self.logger.debug(msg)
 
     @abstractmethod
     def vm_deploy(self, fail_if_exists=True):
+        pass
+
+    @abstractmethod
+    def vm_start(self):
+        pass
+
+    @abstractmethod
+    def vm_pause(self):
+        pass
+
+    @abstractmethod
+    def vm_take_snapshot(self, snapshot_name):
+        pass
+
+    @abstractmethod
+    def vm_restore_snapshot(self, snapshot_name):
         pass
 
     @abstractmethod
@@ -49,7 +66,19 @@ class VmWare(VmBase):
     def vm_deploy(self, fail_if_exists=True):
         pass
 
+    def vm_pause(self):
+        pass
+
+    def vm_take_snapshot(self, snapshot_name):
+        pass
+
+    def vm_restore_snapshot(self, snapshot_name):
+        pass
+
     def vm_start_and_get_ip(self, fail_if_already_running=True):
+        pass
+
+    def vm_start(self):
         pass
 
     def vm_poweroff(self):
@@ -74,6 +103,18 @@ class Vbox(VmBase):
     def __init__(self, *, vboxmanage, **kwargs):
         super(Vbox, self).__init__(**kwargs)
         self.vboxmanage = vboxmanage
+
+    def vm_pause(self):
+        self.run_vboxmanage(f'controlvm {self.name} pause')
+
+    def vm_take_snapshot(self, snapshot_name):
+        self.run_vboxmanage(f'snapshot {self.name} take {snapshot_name}')
+
+    def vm_restore_snapshot(self, snapshot_name):
+        self.run_vboxmanage(f'snapshot {self.name} restore {snapshot_name}')
+
+    def vm_start(self):
+        self.run_vboxmanage(f'startvm {self.name}')
 
     def run_vboxmanage(self, args):
         if type(args) is str:

@@ -161,8 +161,20 @@ class Cluster:
             return ip_interface(self.virtual_ip)
         return IPv4Interface(self.virtual_ip + "/24")
 
+    def ha_standby_all(self):
+        self.master.ssh_run_check("pcs cluster standby --all")
+
+    def ha_unstandby_all(self):
+        self.master.ssh_run_check("pcs cluster unstandby --all")
+
+    def ha_stop_all(self):
+        self.master.ssh_run_check("pcs cluster stop --all")
+
+    def ha_start_all(self):
+        self.master.ssh_run_check("pcs cluster start --all")
+
     def ha_drop_vip(self):
-        self.master.ssh_run_check(f"pcs resource delete ClusterVIP")
+        self.master.ssh_run_check("pcs resource delete ClusterVIP")
 
     def ha_disable_stonith(self):
         self.master.ssh_run_check("pcs property set stonith-enabled=false")
