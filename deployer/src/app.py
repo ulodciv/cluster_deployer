@@ -1,10 +1,9 @@
 import json
 import logging
+import sys
 from argparse import ArgumentParser
 from datetime import timedelta
 from time import time
-
-import sys
 
 from deployer import Cluster
 from deployer_error import DeployerError

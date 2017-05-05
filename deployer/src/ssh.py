@@ -229,7 +229,7 @@ class Ssh(Linux, metaclass=ABCMeta):
             yield ssh.open_sftp()
 
     def ssh_run_(self, user, ssh, command, *,
-                 check=False, return_output=True):
+                 check=False, get_output=True):
         self.log(f"{user}: [{command}]")
         try:
             i, o, e = ssh.exec_command(command)
@@ -237,7 +237,7 @@ class Ssh(Linux, metaclass=ABCMeta):
             raise DeployerError(
                 f"{user}@{self.name}: SSHException for:\n"
                 f"{command}\non {self.name}:\n{e}")
-        if return_output:
+        if get_output:
             stdout = o.read().decode()
         if check:
             stderr = e.read().decode()
@@ -247,27 +247,27 @@ class Ssh(Linux, metaclass=ABCMeta):
                     f"{user}@{self.name}: got exit status {exit_status} for:\n"
                     f"{command}\n"
                     f"stderr: {stderr}")
-        if return_output:
+        if get_output:
             return stdout
 
     def ssh_run(self, command_or_commands, *,
-                user="root", check=False, return_output=False):
+                user="root", check=False, get_output=False):
         with self.open_ssh(user) as ssh:
             if type(command_or_commands) is str:
                 return self.ssh_run_(user, ssh, command_or_commands,
-                                     check=check, return_output=return_output)
+                                     check=check, get_output=get_output)
             else:
                 ret = []
                 for command in command_or_commands:
                     ret.append(self.ssh_run_(
                         user, ssh, command,
-                        check=check, return_output=return_output))
+                        check=check, get_output=get_output))
                 return ret
 
     def ssh_run_check(self, command_or_commands, *,
-                      user="root", return_output=False):
+                      user="root", get_output=False):
         return self.ssh_run(command_or_commands,
-                            user=user, check=True, return_output=return_output)
+                            user=user, check=True, get_output=get_output)
 
     def add_hosts_to_etc_hosts(self, vms):
         hosts_file = PurePosixPath("/etc/hosts")

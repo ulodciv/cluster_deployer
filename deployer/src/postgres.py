@@ -72,7 +72,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
 
     def pg_current_setting2(self, setting) -> str:
         c = f'psql -t -c "select current_setting(\'{setting}\');"'
-        o = self.ssh_run_check(c, user=self.pg_user, return_output=True)
+        o = self.ssh_run_check(c, user=self.pg_user, get_output=True)
         return o.strip()
 
     def pg_current_setting(self, setting):
@@ -133,7 +133,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         cmd = ["psql", "-d", db, "-v", "ON_ERROR_STOP=1", "-qXAt",
                "-R", rs_bash, "-F", fs_bash, "-c", f'"{sql};"']
         o = self.ssh_run_check(
-            " ".join(cmd), user=self.pg_user, return_output=True)
+            " ".join(cmd), user=self.pg_user, get_output=True)
         if o:
             ans = o[:-1]
             res = []

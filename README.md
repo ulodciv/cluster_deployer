@@ -1,7 +1,10 @@
 # deploy_cluster
-Easily deploy clusters of 2+ nodes with resilisent replicated Postgresql.
+Easily deploy clusters of 2+ nodes with resilisent replicated Postgresql. The 
+purpose of this application is to assist in the preparation of clusters to 
+run tests and validate that the postgresl resource agent works properly. 
 
-Runs on Windows, and should run on other UNIX-likes with little changes.
+Runs using VirtualBox Windows, and should run on other UNIX-likes with little 
+changes.
 
 Requires Python 3.6 using external module Paramiko.
 
@@ -36,4 +39,6 @@ Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
         
 	- Perhaps the RA could try to clean up a crashed master instance by starting it and shutting it down
 
-- Make deployer work on VMWare.
+- Make deployer work on Linux (shouldn't require too much work)
+
+- Make deployer work on QEMU and VMWare.

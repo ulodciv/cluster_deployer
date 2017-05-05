@@ -50,12 +50,12 @@ class Linux(VmBase, metaclass=ABCMeta):
 
     @abstractmethod
     def ssh_run(self, command_or_commands, *,
-                user="root", check=False, return_output=False):
+                user="root", check=False, get_output=False):
         pass
 
     @abstractmethod
     def ssh_run_(self, user, ssh, command, *,
-                 check=False, return_output=True):
+                 check=False, get_output=True):
         pass
 
     @abstractmethod
@@ -65,7 +65,7 @@ class Linux(VmBase, metaclass=ABCMeta):
 
     @abstractmethod
     def ssh_run_check(self, command_or_commands, *,
-                      user="root", return_output=False):
+                      user="root", get_output=False):
         pass
 
     @abstractmethod
@@ -129,12 +129,12 @@ class Linux(VmBase, metaclass=ABCMeta):
                 ssh,
                 f"getent passwd {user_obj.user}",
                 check=True,
-                return_output=True)
+                get_output=True)
             user_obj.home_dir = o.split(":")[5]
 
     def selinux_is_active(self):
         if self._selinux_is_active is None:
-            o = self.ssh_run_check("getenforce", return_output=True)
+            o = self.ssh_run_check("getenforce", get_output=True)
             self._selinux_is_active = o.strip().lower() == "enforcing"
         return self._selinux_is_active
 
