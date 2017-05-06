@@ -31,13 +31,21 @@ Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
 # TODO
 
 - Issues:
-	- RA should block slave instances that fail to stream from Master, at least with timeline fork issues, eg:
+    - RA should report a non replicating slave as down, somehow. This can 
+    possibly be done with replication slots and inspecting the ouptut of 
+            
+            SELECT * FROM pg_replication_slots
+             
+	- RA should block slave instances that fail to stream from Master, at least 
+	with timeline fork issues, eg:
 	
             LOG:  fetching timeline history file for timeline 3 from primary server
-            FATAL:  could not start WAL streaming: ERROR:  requested starting point 0/9000000 on timeline 2 is not in this server's history
+            FATAL:  could not start WAL streaming: ERROR:  requested starting point 0/9000000 
+            on timeline 2 is not in this server's history
             DETAIL:  This server's history forked from timeline 2 at 0/80001A8.
-        
-	- Perhaps the RA could try to clean up a crashed master instance by starting it and shutting it down
+            
+	- Perhaps the RA could try to clean up a crashed master instance by starting 
+	it and shutting it down
 
 - Make deployer work on Linux (shouldn't require too much work)
 
