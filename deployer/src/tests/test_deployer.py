@@ -8,7 +8,7 @@ import deployer
 class ClusterContext:
     cluster_json = """\
         {
-          "ova": "D:/ovas/centos7_3.ova",
+          "ova": "../../centos7_5.ova",
           "cluster_name": "TestCluster",
           "virtual_ip": "192.168.72.221",
           "users": ["root", "postgres", "repl1"],
@@ -121,27 +121,23 @@ class TestDeployer1(unittest.TestCase):
             rs = standby.pg_execute(select_sql, db=DB)
             self.assertEqual('foo', rs[0][0])
 
-    def test_simple_replication2(self):
-        master = self.cluster.master
-
+    def test_pcs_standby(self):
+        cluster = self.cluster
+        master = cluster.master
+        standby = cluster.standbies[-1]
+        cluster.ha_standby(standby)
+        sleep(5)
+        with self.assertRaises(Exception) as _:
+            standby.pg_execute("select 1")
         master.pg_execute(
             "update person.addresstype "
             "set name='test12' where addresstypeid=1", db=DB)
+        cluster.ha_unstandby(standby)
+        sleep(5)
+        self.assertEqual(standby.pg_execute("select 1"), [['1']])
         select_sql = "select name from person.addresstype where addresstypeid=1"
-        rs = master.pg_execute(select_sql, db=DB)
+        rs = standby.pg_execute(select_sql, db=DB)
         self.assertEqual('test12', rs[0][0])
-        sleep(0.5)
-        for standby in self.cluster.standbies:
-            rs = standby.pg_execute(select_sql, db=DB)
-            self.assertEqual('test12', rs[0][0])
-
-        master.pg_execute(
-            "update person.addresstype "
-            "set name='foo' where addresstypeid=1", db=DB)
-        sleep(0.5)
-        for standby in self.cluster.standbies:
-            rs = standby.pg_execute(select_sql, db=DB)
-            self.assertEqual('foo', rs[0][0])
 
 
 class TestDeployer2(unittest.TestCase):

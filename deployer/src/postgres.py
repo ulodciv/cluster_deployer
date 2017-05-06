@@ -213,7 +213,6 @@ class Postgres(Ssh, metaclass=ABCMeta):
             f"pg_basebackup -h {master.name} -D {master.pg_data_directory} "
             f"-U {master.pg_repl_user} -Xs"],
             user=self.pg_user)
-
         """
         # self._pg_add_to_conf("hot_standby", "on")
         # self._pg_add_to_conf("hot_standby_feedback ", "on")

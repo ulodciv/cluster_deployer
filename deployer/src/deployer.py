@@ -161,6 +161,12 @@ class Cluster:
             return ip_interface(self.virtual_ip)
         return IPv4Interface(self.virtual_ip + "/24")
 
+    def ha_standby(self, vm):
+        self.master.ssh_run_check(f"pcs cluster standby {vm.name}")
+
+    def ha_unstandby(self, vm):
+        self.master.ssh_run_check(f"pcs cluster unstandby {vm.name}")
+
     def ha_standby_all(self):
         self.master.ssh_run_check("pcs cluster standby --all")
 
