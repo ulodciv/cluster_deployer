@@ -5,8 +5,8 @@ from argparse import ArgumentParser
 from datetime import timedelta
 from time import time
 
-from deployer import Cluster
 from deployer_error import DeployerError
+from deployer import Cluster
 
 
 def main(args):

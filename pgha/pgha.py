@@ -16,7 +16,7 @@ from tempfile import gettempdir
 from time import sleep
 
 VERSION = "1.0"
-PROGRAM = "pgsqlha"
+PROGRAM = "pgha"
 MIN_PG_VER = LooseVersion('9.5')
 OCF_SUCCESS = 0
 OCF_RUNNING_SLAVE = OCF_SUCCESS
@@ -758,9 +758,9 @@ def delete_replication_slots():
 
 
 def run_election():
-    # The promotion is occurring on the candidate with the highest master score,
-    # as chosen by pacemaker during the last monitor on previous master (see
-    # ocf_monitor/check_locations subs). To avoid race conditions between the
+    # The slave with the highest master score gets promoted, as chosen by
+    # pacemaker during the last monitor on previous master (see
+    # ocf_monitor/check_locations subs). To avoid a race condition between the
     # last monitor action on the previous master and the real most up-to-date
     # standby, we set each standby location during pre-promote, and store them
     # using the "lsn_location" resource attribute.
@@ -1165,9 +1165,9 @@ def ocf_start():
         return OCF_ERR_GENERIC
     # On first cluster start, no master score exists on any standbies unless
     # manually set with crm_master. Without master scores the cluster won't
-    # promote one from the slaves. To avoid this, we check if at least one
-    # master score exists. Do nothing if it's the case, otherwise set a score of
-    # 1 only if the resource was a master shut down before the start.
+    # promote any slave. To avoid this, we check if at least one master score
+    # exists. Do nothing if it's the case, otherwise set a score of 1 only if
+    # the resource was a master shut down before the start.
     if prev_state == "shut down" and not _master_score_exists():
         log_info("no master score around; set mine to 1")
         set_master_score("1")

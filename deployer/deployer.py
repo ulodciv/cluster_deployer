@@ -101,7 +101,7 @@ class Cluster:
             [partial(v.add_fingerprints, self.vms) for v in self.vms])
 
     def deploy_part_3(self):
-        remote_ra = "/usr/lib/ocf/resource.d/heartbeat/pgsqlha"
+        remote_ra = "/usr/lib/ocf/resource.d/heartbeat/pgha"
         for vm in self.vms:
             vm.sftp_put(self.pg_ra, remote_ra)
             vm.ssh_run_check(f"chmod +x {remote_ra}")
@@ -206,7 +206,7 @@ class Cluster:
     def ha_add_pg_to_xml(self):
         master = self.master
         self._ha_pcs_xml(
-            f"resource create pgsqld ocf:heartbeat:pgsqlha "
+            f"resource create pgsqld ocf:heartbeat:pgha "
             f"bindir={master.pg_bindir} "
             f"pgdata={master.pg_data_directory} "
             f"pgconf={master.pg_config_file} "

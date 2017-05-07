@@ -9,7 +9,7 @@ from distutils.version import StrictVersion
 from tempfile import gettempdir
 from subprocess import check_call, call
 
-import pgsqlha as RA
+import pgha as RA
 
 
 # returns CENTOS, UBUNTU, DEBIAN, or something else
