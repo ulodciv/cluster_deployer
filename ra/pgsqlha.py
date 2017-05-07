@@ -395,12 +395,12 @@ ORDER BY priority DESC"""
 def check_locations():
     nodename = get_ocf_nodename()
     # exclude nodes that are not part of the cluster
-    partition_nodes = get_ha_nodes()
+    crm_nodes = get_ha_nodes()
     # For each standby connected, set their master score based on the following
     # rule: the first known node/application, with the highest priority and
     # with an acceptable state.
     for standby in get_connected_standbies():
-        if standby.application_name not in partition_nodes:
+        if standby.application_name not in crm_nodes:
             log_info("ignoring unknown application_name/node {}",
                      standby.application_name)
             continue
@@ -427,10 +427,10 @@ def check_locations():
                 log_debug("{} keeps its current score of {}",
                           standby.application_name, standby.priority)
         # Remove this node from the known nodes list.
-        partition_nodes.remove(standby.application_name.strip())
-    # If there are still nodes in "partition_nodes", it means there is no
+        crm_nodes.remove(standby.application_name.strip())
+    # If there are still nodes in "crm_nodes", it means there is no
     # corresponding line in "pg_stat_replication".
-    for node in partition_nodes:
+    for node in crm_nodes:
         # Exclude the current node.
         if node == nodename:
             continue
@@ -649,8 +649,8 @@ def get_master_score(node=None):
 # in the cluster and the score is greater or equal of 0.
 # Returns True if at least one master score >= 0 is found, False otherwise
 def _master_score_exists():
-    partition_nodes = get_ha_nodes()
-    for node in partition_nodes:
+    crm_nodes = get_ha_nodes()
+    for node in crm_nodes:
         score = get_master_score(node)
         if score != "" and int(score) > -1:
             return True
@@ -672,7 +672,6 @@ def set_master_score(score, node=None):
 
 
 def ocf_promote():
-    nodename = get_ocf_nodename()
     inst = get_rcs_inst()
     rc = ocf_monitor()
     if rc == OCF_SUCCESS:
@@ -706,75 +705,11 @@ def ocf_promote():
     if get_ha_private_attr("recover_master") == "1":
         log_info("recovering old master, no election needed")
     else:
-        # The promotion is occurring on the best known candidate (highest
-        # master score), as chosen by pacemaker during the last working monitor
-        # on previous master (see ocf_monitor/check_locations subs).
-        # To avoid race conditions between the last monitor action on the
-        # previous master and the *real* most up-to-date standby, we set each
-        # standby location during pre-promote, and store them using the
-        # "lsn_location" resource attribute.
-        #
-        # The best standby to promote has the highest LSN. If the
-        # current resource is not the best one, we need to modify the master
-        # scores accordingly, and abort the current promotion.
-        log_debug("checking if current node is the best for promotion")
-        # Exclude nodes that are known to be unavailable (not in the current
-        # partition) using the "crm_node" command
-        active_nodes = get_ha_private_attr("nodes").split()
-        node_to_promote = ""
-        # Get the lsn_location attribute value of the current node, as set
-        # during the "pre-promote" action.
-        # It should be the greatest among the standby instances.
-        max_lsn = get_ha_private_attr("lsn_location")
-        if max_lsn == "":
-            # Should not happen since the "lsn_location" attribute should have
-            # been updated during pre-promote.
-            log_crit("can not get current node LSN location")
+        if not run_election():
             return OCF_ERR_GENERIC
-        # convert location to decimal
-        max_lsn = max_lsn.strip("\n")
-        wal_num, wal_off = max_lsn.split("/")
-        max_lsn_dec = (294967296 * int(wal_num, 16)) + int(wal_off, 16)
-        log_debug("current node lsn location: {}({})", max_lsn, max_lsn_dec)
-        # Now we compare with the other available nodes.
-        for node in active_nodes:
-            # We exclude the current node from the check.
-            if node == nodename:
-                continue
-            # Get the "lsn_location" attribute value for the node, as set during
-            # the "pre-promote" action.
-            node_lsn = get_ha_private_attr("lsn_location", node)
-            if node_lsn == "":
-                # This should not happen as the "lsn_location" attribute should
-                # have been updated during the "pre-promote" action.
-                log_crit("can't get LSN location of {}", node)
-                return OCF_ERR_GENERIC
-            # convert location to decimal
-            node_lsn = node_lsn.strip("\n")
-            wal_num, wal_off = node_lsn.split("/")
-            node_lsn_dec = (4294967296 * int(wal_num, 16)) + int(wal_off, 16)
-            log_debug("comparing with {}: lsn is {}({})",
-                      node, node_lsn, node_lsn_dec)
-            # If the node has a bigger delta, select it as a best candidate to
-            # promotion.
-            if node_lsn_dec > max_lsn_dec:
-                node_to_promote = node
-                max_lsn_dec = node_lsn_dec
-                # max_lsn = node_lsn
-                log_debug("found {} as a better candidate to promote", node)
-        # If any node has been selected, we adapt the master scores accordingly
-        # and break the current promotion.
-        if node_to_promote != "":
-            log_info("{} is the best candidate to promote, "
-                     "aborting current promotion", node_to_promote)
-            # Reset current node master score.
-            set_master_score("1")
-            # Set promotion candidate master score.
-            set_master_score("1000", node_to_promote)
-            # We fail the promotion to trigger another promotion transition
-            # with the new scores.
-            return OCF_ERR_GENERIC
-            # Else, we will keep on promoting the current node.
+    if not add_replication_slots(get_ha_nodes()):
+        log_err("failed to add all replication slots", inst)
+        return OCF_ERR_GENERIC
     if as_postgres([get_pgctl(), "promote", "-D", get_pgdata(), "-w", ]) != 0:
         # Promote the instance on the current node.
         log_err("error during promotion")
@@ -785,6 +720,114 @@ def ocf_promote():
         sleep(1)
     log_info("promote complete")
     return OCF_SUCCESS
+
+
+def add_replication_slots(slave_nodes):
+    nodename = get_ocf_nodename()
+    rc, rs = pg_execute("SELECT slot_name FROM pg_replication_slots")
+    slots = [r[0] for r in rs]
+    for node in slave_nodes:
+        if node == nodename:
+            continue
+        slot = node.replace('-', '_') + "_slot"
+        if slot in slots:
+            continue
+        rc, rs = pg_execute(
+            "SELECT * FROM pg_create_physical_replication_slot('{}')".format(
+                slot))
+        if rc != 0:
+            log_err("failed to add replication slot {}".format(slot))
+            return False
+        log_debug("added replication slot {}".format(slot))
+    return True
+
+
+def delete_replication_slots():
+    rc, rs = pg_execute("SELECT slot_name FROM pg_replication_slots")
+    if not rs:
+        log_debug("no replication slots to delete")
+        return True
+    for slot in [r[0] for r in rs]:
+        q = "SELECT * FROM pg_drop_replication_slot('{}')".format(slot)
+        rc, rs = pg_execute(q)
+        if rc != 0:
+            log_err("failed to delete replication slot {}".format(slot))
+            return False
+        log_debug("deleted replication slot {}".format(slot))
+    return True
+
+
+def run_election():
+    # The promotion is occurring on the candidate with the highest master score,
+    # as chosen by pacemaker during the last monitor on previous master (see
+    # ocf_monitor/check_locations subs). To avoid race conditions between the
+    # last monitor action on the previous master and the real most up-to-date
+    # standby, we set each standby location during pre-promote, and store them
+    # using the "lsn_location" resource attribute.
+    #
+    # The best standby to promote has the highest LSN. If the current resource
+    # is not the best one, we need to modify the master scores accordingly,
+    # and abort the current promotion.
+    log_debug("checking if current node is the best for promotion")
+    # Exclude nodes that are known to be unavailable (not in the current
+    # partition) using the "crm_node" command
+    active_nodes = get_ha_private_attr("nodes").split()
+    node_to_promote = ""
+    # Get the lsn_location attribute value of the current node, as set
+    # during the "pre-promote" action.
+    # It should be the greatest among the standby instances.
+    max_lsn = get_ha_private_attr("lsn_location")
+    if max_lsn == "":
+        # Should not happen since the "lsn_location" attribute should have
+        # been updated during pre-promote.
+        log_crit("can not get current node LSN location")
+        return False
+    # convert location to decimal
+    max_lsn = max_lsn.strip("\n")
+    wal_num, wal_off = max_lsn.split("/")
+    max_lsn_dec = (294967296 * int(wal_num, 16)) + int(wal_off, 16)
+    log_debug("current node lsn location: {}({})", max_lsn, max_lsn_dec)
+    # Now we compare with the other available nodes.
+    nodename = get_ocf_nodename()
+    for node in active_nodes:
+        # We exclude the current node from the check.
+        if node == nodename:
+            continue
+        # Get the "lsn_location" attribute value for the node, as set during
+        # the "pre-promote" action.
+        node_lsn = get_ha_private_attr("lsn_location", node)
+        if node_lsn == "":
+            # This should not happen as the "lsn_location" attribute should
+            # have been updated during the "pre-promote" action.
+            log_crit("can't get LSN location of {}", node)
+            return False
+        # convert location to decimal
+        node_lsn = node_lsn.strip("\n")
+        wal_num, wal_off = node_lsn.split("/")
+        node_lsn_dec = (4294967296 * int(wal_num, 16)) + int(wal_off, 16)
+        log_debug("comparing with {}: lsn is {}({})",
+                  node, node_lsn, node_lsn_dec)
+        # If the node has a bigger delta, select it as a best candidate to
+        # promotion.
+        if node_lsn_dec > max_lsn_dec:
+            node_to_promote = node
+            max_lsn_dec = node_lsn_dec
+            # max_lsn = node_lsn
+            log_debug("found {} as a better candidate to promote", node)
+    # If any node has been selected, we adapt the master scores accordingly
+    # and break the current promotion.
+    if node_to_promote != "":
+        log_info("{} is the best candidate to promote, "
+                 "aborting current promotion", node_to_promote)
+        # Reset current node master score.
+        set_master_score("1")
+        # Set promotion candidate master score.
+        set_master_score("1000", node_to_promote)
+        # Make the promotion fail to trigger another promotion transition
+        # with the new scores.
+        return False
+    # keep on promoting the current node.
+    return True
 
 
 # check if th current transition is a switchover to the given node
@@ -978,9 +1021,22 @@ def notify_pre_demote(nodes):
     return OCF_SUCCESS
 
 
+def notify_pre_start(nodes):
+    """
+    If this is a Master, add replication slots for the nodes being started if
+    they are absent.
+    :param nodes:
+    :return: OCF_SUCCESS is all goes well (sole possibility AFAICT)
+    """
+    if get_ocf_nodename() in nodes["master"]:
+        log_info("this node is a Master: add any missing replication slots")
+        add_replication_slots(nodes["start"])
+    return OCF_SUCCESS
+
+
 def notify_pre_stop(nodes):
-    # do nothing if the local node will not be stopped
     this_node = get_ocf_nodename()
+    # do nothing if the local node will not be stopped
     if this_node not in nodes["stop"]:
         return OCF_SUCCESS
     rc = get_ocf_status()
@@ -1075,7 +1131,7 @@ def ocf_validate_all():
     return OCF_SUCCESS
 
 
-# Start the PostgreSQL instance as a *standby*
+# Start the PostgreSQL instance as a standby
 def ocf_start():
     rc = ocf_monitor()
     inst = get_rcs_inst()
@@ -1104,14 +1160,14 @@ def ocf_start():
         log_err("{} is not running as a standby (returned {})", inst, rc)
         return OCF_ERR_GENERIC
     log_info("{} started", inst)
-    # Check if a master score exists in the cluster.
-    # During the first cluster start, no master score will exist on any of the
-    # slaves, unless an admin set one with crm_master. If no master exists the
-    # cluster won't promote one from the slaves. To solve this, we check if
-    # there is at least one master score existing on one node. Do nothing if at
-    # least one master score is found in the clones of the resource. If no
-    # master score exists, set a score of 1 only if the resource was a
-    # master shut down before the start.
+    if not delete_replication_slots():
+        log_err("failed to delete all replication slots", inst)
+        return OCF_ERR_GENERIC
+    # On first cluster start, no master score exists on any standbies unless
+    # manually set with crm_master. Without master scores the cluster won't
+    # promote one from the slaves. To avoid this, we check if at least one
+    # master score exists. Do nothing if it's the case, otherwise set a score of
+    # 1 only if the resource was a master shut down before the start.
     if prev_state == "shut down" and not _master_score_exists():
         log_info("no master score around; set mine to 1")
         set_master_score("1")
@@ -1296,6 +1352,8 @@ def ocf_notify():
         return notify_pre_demote(d["nodes"])
     if type_op == "pre-stop":
         return notify_pre_stop(d["nodes"])
+    if type_op == "pre-start":
+        return notify_pre_start(d["nodes"])
     return OCF_SUCCESS
 
 

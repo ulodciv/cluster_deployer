@@ -173,6 +173,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_set_param("archive_command", "'cp %p ../../wals_from_this/%f'")
         self.pg_set_param("listen_addresses", "'*'")
         self.pg_set_param("hot_standby", "on")
+        # to be removed once  replication slots work
         self.pg_set_param("hot_standby_feedback", "on")
 
     def pg_write_recovery_for_pcmk(self, virtual_ip):
@@ -193,6 +194,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             "primary_conninfo",
             f"host={virtual_ip} port=5432 user={repl_user} "
             f"application_name={self.name}")
+        self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
 
     def pg_standby_backup_from_master(self, master: 'Postgres'):
         """
@@ -225,9 +227,11 @@ class Postgres(Ssh, metaclass=ABCMeta):
             "primary_conninfo",
             f"host={master.ip} port=5432 user={master.pg_repl_user}")
         """
-        # self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
         self.ssh_run_check(
             f"sed -i s/{master.name}/{self.name}/ {master.pg_pcmk_recovery_file}",
+            user=self.pg_user)
+        self.ssh_run_check(
+            f"sed -i s/{master.pg_slot}/{self.pg_slot}/ {master.pg_pcmk_recovery_file}",
             user=self.pg_user)
         self.ssh_run_check(
             f"cp {master.pg_pcmk_recovery_file} "

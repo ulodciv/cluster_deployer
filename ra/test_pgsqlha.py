@@ -52,6 +52,7 @@ wal_level = replica
 max_wal_senders = 5
 hot_standby = on
 hot_standby_feedback = on
+max_replication_slots = 10 
 wal_receiver_status_interval = 20s
 """
 HBA_ADDITIONS = "\nlocal replication all trust\n"
@@ -228,6 +229,9 @@ primary_conninfo = 'port={}'
         rc, rs = RA.pg_execute("SELECT 25")
         self.assertEqual(0, rc)
         self.assertEqual([["25"]], rs)
+        rc, rs = RA.pg_execute("this is not a valid query")
+        self.assertEqual(3, rc)
+        self.assertEqual([], rs)
 
     def test_get_ocf_status_from_pg_cluster_state(self):
         ocf_status = RA.get_ocf_status()
@@ -267,6 +271,19 @@ primary_conninfo = 'port={}'
         finally:
             RA.MIN_PG_VER = ver_backup
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
+
+    def test_add_delete_replication_slots(self):
+        self.set_env_to_master()
+        RA.set_ha_private_attr("nodes", "node1 node2 {}".format(UNAME))
+        self.assertTrue(RA.add_replication_slots(["node1", UNAME, "node2"]))
+        rc, rs = RA.pg_execute("SELECT slot_name FROM pg_replication_slots")
+        self.assertEqual(0, rc)
+        self.assertEqual([["node1_slot"], ["node2_slot"]], rs)
+        RA.del_ha_private_attr("nodes")
+        self.assertTrue(RA.delete_replication_slots())
+        rc, rs = RA.pg_execute("SELECT slot_name FROM pg_replication_slots")
+        self.assertEqual(0, rc)
+        self.assertEqual([], rs)
 
 
 class TestHa(unittest.TestCase):

@@ -62,6 +62,7 @@ class ClusterContext:
         # start the vm
         for vm in self.cluster.vms:
             vm.vm_start()
+        sleep(3)
         self.cluster.ha_unstandby_all()
         sleep(30)
 
@@ -140,39 +141,39 @@ class TestDeployer1(unittest.TestCase):
         self.assertEqual('test12', rs[0][0])
 
 
-class TestDeployer2(unittest.TestCase):
-
-    def setUp(self):
-        _cluster_context.setup()
-        self.cluster = _cluster_context.cluster
-
-    @unittest.skip("WIP")
-    def test_kill_master(self):
-        """
-        Action: poweroff standbies and immediately
-        run some update SQL on master
-        Action: poweroff master
-        Action: poweron standbies
-        Action: pcs cluster start standby1, standby2
-        Check: a standby became Master
-        Action: poweron Master
-        Action: pcs cluster start <previous master>
-        Check: replication from previous master works again
-        """
-        db = "demo_db"
-        master = self.cluster.master
-        master.pg_execute(
-            "update person.addresstype "
-            "set name='test12' where addresstypeid=1", db=DB)
-        select_sql = "select name from person.addresstype where addresstypeid=1"
-        rs = master.pg_execute(select_sql, db=DB)
-        self.assertEqual('test12', rs[0][0])
-        sleep(0.5)
-        for standby in self.cluster.standbies:
-            rs = standby.pg_execute(select_sql, db=DB)
-            self.assertEqual('test12', rs[0][0])
-        # for standby in self.cluster.standbies:
-        #     standby.vm_poweroff()
-        master.pg_execute(
-            "update person.addresstype "
-            "set name='test123' where addresstypeid=1", db=db)
+# class TestDeployer2(unittest.TestCase):
+#
+#     def setUp(self):
+#         _cluster_context.setup()
+#         self.cluster = _cluster_context.cluster
+#
+#     @unittest.skip("WIP")
+#     def test_kill_master(self):
+#         """
+#         Action: poweroff standbies and immediately
+#         run some update SQL on master
+#         Action: poweroff master
+#         Action: poweron standbies
+#         Action: pcs cluster start standby1, standby2
+#         Check: a standby became Master
+#         Action: poweron Master
+#         Action: pcs cluster start <previous master>
+#         Check: replication from previous master works again
+#         """
+#         db = "demo_db"
+#         master = self.cluster.master
+#         master.pg_execute(
+#             "update person.addresstype "
+#             "set name='test12' where addresstypeid=1", db=DB)
+#         select_sql = "select name from person.addresstype where addresstypeid=1"
+#         rs = master.pg_execute(select_sql, db=DB)
+#         self.assertEqual('test12', rs[0][0])
+#         sleep(0.5)
+#         for standby in self.cluster.standbies:
+#             rs = standby.pg_execute(select_sql, db=DB)
+#             self.assertEqual('test12', rs[0][0])
+#         # for standby in self.cluster.standbies:
+#         #     standby.vm_poweroff()
+#         master.pg_execute(
+#             "update person.addresstype "
+#             "set name='test123' where addresstypeid=1", db=db)
