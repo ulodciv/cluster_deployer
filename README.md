@@ -21,12 +21,12 @@ Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
 
 1. Export the VM as an OVA file 
     
-1. Update the JSON cluster file as needed (cluster.json)
+1. Update the JSON cluster file as needed (config\cluster.json)
 
 1. Deploy the cluster: 
    
         cd deployer
-        python src\app.py cluster.json
+        python deployer\app.py config\cluster.json
 
 # TODO
 
