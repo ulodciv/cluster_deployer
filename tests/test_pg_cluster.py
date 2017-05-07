@@ -53,12 +53,12 @@ def test_kill_standby(cluster_context):
     """
     Action: poweroff a standby
     Action: sleep 15 seconds
-    Check: crm_node -p : leaves only two nodes
+    Check: crm_node -p: excludes powered off node
     Action: execute an update
-    Check: remaining slave is updated
+    Check: remaining slaves are updated
     Action: power on standby
     Action: pcs cluster start standby
-    Check: crm_node -p : has three nodes
+    Check: crm_node -p: has all nodes
     Check: started slave is updated
     """
     cluster_context.setup()
@@ -74,6 +74,23 @@ def test_kill_standby(cluster_context):
         remaining_nodes.add(standby.name)
     crm_nodes = set(master.ssh_run("crm_node -p", get_output=True).split())
     assert remaining_nodes == crm_nodes
+    master.pg_execute(
+        "update person.addresstype "
+        "set name='test12' where addresstypeid=1", db=DB)
+    sleep(0.5)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in other_standbies:
+        rs = standby.pg_execute(select_sql, db=DB)
+        assert 'test12' == rs[0][0]
+    killed_standby.vm_start()
+    sleep(15)
+    cluster.ha_start_all()
+    sleep(25)
+    all_nodes = {vm.name for vm in cluster.vms}
+    crm_nodes = set(master.ssh_run("crm_node -p", get_output=True).split())
+    assert all_nodes == crm_nodes
+    rs = killed_standby.pg_execute(select_sql, db=DB)
+    assert 'test12' == rs[0][0]
 
 
 def test_kill_master(cluster_context):
