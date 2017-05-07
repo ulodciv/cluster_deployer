@@ -25,7 +25,6 @@ Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
 
 1. Deploy the cluster: 
    
-        cd deployer
         python deployer\app.py config\cluster.json
 
 # TODO
