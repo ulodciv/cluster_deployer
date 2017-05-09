@@ -12,7 +12,7 @@ DB = "demo_db"
 class ClusterContext:
     cluster_json = """\
         {
-          "ova": "../centos7_6.ova",
+          "ova": "D:/ovas/centos7_3.ova",
           "cluster_name": "TestCluster",
           "virtual_ip": "192.168.72.221",
           "users": ["root", "postgres", "repl1"],
@@ -224,4 +224,8 @@ def test_kill_master(cluster_context):
     # cluster.master = cluster.standbies[0]
     to_start = " ".join(vm.name for vm in cluster.standbies)
     cluster.standbies[0].ssh_run_check(f"pcs cluster start {to_start}")
-    # sleep(30)
+    sleep(5)
+    cluster.standbies[0].ssh_run_check(f"crm_resource --cleanup")  # HACK
+    master.vm_start()
+    sleep(20)
+    cluster.ha_start(master)
