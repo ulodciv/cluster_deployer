@@ -6,7 +6,7 @@ from datetime import timedelta
 from time import time
 
 from deployer_error import DeployerError
-from deployer import Cluster
+from cluster import Cluster
 
 
 def main(args):

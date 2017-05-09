@@ -44,6 +44,7 @@ class Cluster:
             raise DeployerError("can't find vboxmanage.exe: is VBox installed?")
 
     def __init__(self, vboxmanage, cluster_def, no_threads=False):
+        self.master = None
         self.configure_logging()
         self.ha_cluster_xml_file = f"cluster.xml"
         self.cluster_name = cluster_def["cluster_name"]
@@ -65,7 +66,7 @@ class Cluster:
                 **host
             } for host in cluster_def["hosts"]
         ]
-        self.vms = [Vm(**h) for h in hosts]
+        self.vms = [PostgresVboxVm(**h) for h in hosts]
         self.no_threads = no_threads
 
     def deploy(self):
@@ -77,12 +78,8 @@ class Cluster:
         self.deploy_part_5()
 
     @property
-    def master(self):
-        return self.vms[0]
-
-    @property
     def standbies(self):
-        return self.vms[1:]
+        return [vm for vm in self.vms if vm != self.master]
 
     def call(self, calls):
         if self.no_threads:
@@ -105,6 +102,7 @@ class Cluster:
         for vm in self.vms:
             vm.sftp_put(self.pg_ra, remote_ra)
             vm.ssh_run_check(f"chmod +x {remote_ra}")
+        self.master = self.vms[0]
         master = self.master
         master.pg_start()
         master.deploy_demo_db(self.demo_db)
@@ -160,24 +158,42 @@ class Cluster:
         if "/" in self.virtual_ip:
             return ip_interface(self.virtual_ip)
         return IPv4Interface(self.virtual_ip + "/24")
+    
+    def _pcs_cluster(self, cmd):
+        self.master.ssh_run_check(f"pcs cluster {cmd}")
 
     def ha_standby(self, vm):
-        self.master.ssh_run_check(f"pcs cluster standby {vm.name}")
+        self._pcs_cluster(f"standby {vm.name}")
 
     def ha_unstandby(self, vm):
-        self.master.ssh_run_check(f"pcs cluster unstandby {vm.name}")
+        self._pcs_cluster(f"unstandby {vm.name}")
 
     def ha_standby_all(self):
-        self.master.ssh_run_check("pcs cluster standby --all")
+        self._pcs_cluster("standby --all")
 
     def ha_unstandby_all(self):
-        self.master.ssh_run_check("pcs cluster unstandby --all")
+        self._pcs_cluster("unstandby --all")
 
     def ha_stop_all(self):
-        self.master.ssh_run_check("pcs cluster stop --all")
+        self._pcs_cluster("stop --all")
 
     def ha_start_all(self):
-        self.master.ssh_run_check("pcs cluster start --all")
+        self._pcs_cluster("start --all")
+
+    def ha_stop(self, vm):
+        self._pcs_cluster(f"stop {vm.name}")
+
+    def ha_start(self, vm):
+        self._pcs_cluster(f"start {vm.name}")
+
+    def ha_get_cib(self):
+        self._pcs_cluster(f"cib {self.ha_cluster_xml_file}")
+
+    def ha_cib_push(self):
+        self._pcs_cluster(f"cib-push {self.ha_cluster_xml_file}")
+
+    def _pcs_xml(self, what):
+        self.master.ssh_run_check(f"pcs -f {self.ha_cluster_xml_file} {what}")
 
     def ha_drop_vip(self):
         self.master.ssh_run_check("pcs resource delete ClusterVIP")
@@ -196,16 +212,9 @@ class Cluster:
         self.master.ssh_run_check(
             f"pcs resource defaults migration-threshold={v}")
 
-    def ha_get_cib(self):
-        self.master.ssh_run_check(
-            f"pcs cluster cib {self.ha_cluster_xml_file}")
-
-    def _ha_pcs_xml(self, what):
-        self.master.ssh_run_check(f"pcs -f {self.ha_cluster_xml_file} {what}")
-
     def ha_add_pg_to_xml(self):
         master = self.master
-        self._ha_pcs_xml(
+        self._pcs_xml(
             f"resource create pgsqld ocf:heartbeat:pgha "
             f"bindir={master.pg_bindir} "
             f"pgdata={master.pg_data_directory} "
@@ -217,32 +226,25 @@ class Cluster:
             f"op monitor interval=15s timeout=10s role=\"Master\" "
             f"op monitor interval=16s timeout=10s role=\"Slave\" "
             f"op notify timeout=60s")
-        self._ha_pcs_xml(
+        self._pcs_xml(
             f"resource master pgsql-ha pgsqld clone-max=3 notify=true")
 
     def ha_add_pg_vip_to_xml(self):
         ipv4 = self.ha_get_vip_ipv4()
-        self._ha_pcs_xml(
+        self._pcs_xml(
             f"resource create pgsql-master-ip ocf:heartbeat:IPaddr2 "
             f"ip={ipv4.ip} cidr_netmask={ipv4.network.prefixlen}")
-        self._ha_pcs_xml(
-            f"constraint colocation add "
-            f"pgsql-master-ip with master pgsql-ha INFINITY")
-        self._ha_pcs_xml(
-            f"constraint order promote "
-            f"pgsql-ha then start pgsql-master-ip symmetrical=false")
-        self._ha_pcs_xml(
-            f"constraint order demote "
-            f"pgsql-ha then stop pgsql-master-ip symmetrical=false")
-
-    def ha_cib_push(self):
-        self.master.ssh_run_check(
-            f"pcs cluster cib-push {self.ha_cluster_xml_file}")
+        self._pcs_xml(f"constraint colocation add "
+                      f"pgsql-master-ip with master pgsql-ha INFINITY")
+        self._pcs_xml(f"constraint order promote pgsql-ha "
+                      f"then start pgsql-master-ip symmetrical=false")
+        self._pcs_xml(f"constraint order demote "
+                      f"pgsql-ha then stop pgsql-master-ip symmetrical=false")
 
 
-class Vm(Vbox, Postgres):
+class PostgresVboxVm(Vbox, Postgres):
     def __init__(self, **kwargs):
-        super(Vm, self).__init__(**kwargs)
+        super(PostgresVboxVm, self).__init__(**kwargs)
 
     def deploy(self, vms):
         self.vm_deploy(False)

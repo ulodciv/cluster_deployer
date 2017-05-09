@@ -443,8 +443,8 @@ def check_locations():
     return OCF_SUCCESS
 
 
-# Check to confirm if the instance is really started as pgisready stated and
-# check if the instance is master or standby.
+# Confirm if the instance is really started as pgisready stated and
+# if the instance is master or standby.
 def confirm_role():
     inst = get_rcs_inst()
     rc, rs = pg_execute("SELECT pg_is_in_recovery()")
@@ -1342,7 +1342,7 @@ def get_notify_dict():
 
 def ocf_notify():
     d = get_notify_dict()
-    log_debug("notify_dict:\n{}", json.dumps(d, indent=4))
+    log_debug("{}", json.dumps(d, indent=4))
     type_op = d["type"] + "-" + d["operation"]
     if type_op == "pre-promote":
         return notify_pre_promote(d["nodes"])
