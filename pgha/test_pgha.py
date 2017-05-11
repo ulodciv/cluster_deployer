@@ -21,7 +21,8 @@ def get_distro():
 
 
 pgversion = "9.6"
-os.environ['OCF_RESOURCE_INSTANCE'] = "foo"
+INST = "foo"
+os.environ['OCF_RESOURCE_INSTANCE'] = INST
 linux_distro = get_distro()
 if linux_distro == "CENTOS":
     PGBIN = "/usr/pgsql-{}/bin".format(pgversion)
@@ -201,9 +202,9 @@ primary_conninfo = 'port={}'
         self.assertEqual(0, rc)
 
     def test_confirm_stopped(self):
-        self.assertEqual(RA.OCF_NOT_RUNNING, RA.confirm_stopped())
+        self.assertEqual(RA.OCF_NOT_RUNNING, RA.confirm_stopped(INST))
         self.start_pg_slave()
-        self.assertEqual(RA.OCF_ERR_GENERIC, RA.confirm_stopped())
+        self.assertEqual(RA.OCF_ERR_GENERIC, RA.confirm_stopped(INST))
 
     def test_get_pg_ctl_status(self):
         self.assertEqual(3, RA.pg_ctl_status())
@@ -213,13 +214,13 @@ primary_conninfo = 'port={}'
         self.assertEqual(3, RA.pg_ctl_status())
 
     def test_get_pg_cluster_state(self):
-        state = RA.get_pg_cluster_state()
+        state = RA.get_pgctrldata_state()
         self.assertEqual('shut down in recovery', state)
         self.start_pg_slave()
-        state = RA.get_pg_cluster_state()
+        state = RA.get_pgctrldata_state()
         self.assertEqual('in archive recovery', state)
         self.stop_pg_slave()
-        state = RA.get_pg_cluster_state()
+        state = RA.get_pgctrldata_state()
         self.assertEqual('shut down in recovery', state)
 
     def test_pg_execute(self):
@@ -234,10 +235,10 @@ primary_conninfo = 'port={}'
         self.assertEqual([], rs)
 
     def test_get_ocf_status_from_pg_cluster_state(self):
-        ocf_status = RA.get_ocf_status()
+        ocf_status = RA.get_non_transitional_pg_state(INST)
         self.assertEqual(ocf_status, RA.OCF_NOT_RUNNING)
         self.start_pg_slave()
-        ocf_status = RA.get_ocf_status()
+        ocf_status = RA.get_non_transitional_pg_state(INST)
         self.assertEqual(ocf_status, RA.OCF_SUCCESS)
 
     def test_validate_all(self):
@@ -292,6 +293,10 @@ class TestHa(unittest.TestCase):
         RA.OCF_ACTION = None
         if 'OCF_RESKEY_CRM_meta_interval' in os.environ:
             del os.environ['OCF_RESKEY_CRM_meta_interval']
+
+    def test_get_set_promotion_score(self):
+        RA.set_promotion_score(2, UNAME)
+        self.assertEqual("2", RA.get_master_score(UNAME))
 
     def test_get_ha_nodes(self):
         nodes = RA.get_ha_nodes()

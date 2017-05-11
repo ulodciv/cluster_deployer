@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from time import sleep
+from functools import partial
+from time import sleep, time
 import json
 
 import pytest
@@ -10,40 +11,14 @@ DB = "demo_db"
 
 
 class ClusterContext:
-    cluster_json = """\
-        {
-          "ova": "D:/ovas/centos7_3.ova",
-          "cluster_name": "TestCluster",
-          "virtual_ip": "192.168.72.221",
-          "users": ["root", "postgres", "repl1"],
-          "pg_ra": "pgha/pgha.py",
-          "pg_user": "postgres",
-          "pg_repl_user": "repl1",
-          "root_password": "root",
-          "key_file": "key/rsa_private.key",
-          "pub_key_file": "key/rsa_pub.key",
-          "demo_db": "demo_db.xz",
-          "hosts": [
-            {
-              "name": "test-pg-1",
-              "static_ip": "192.168.72.151"
-            },
-            {
-              "name": "test-pg-2",
-              "static_ip": "192.168.72.152"
-            },
-            {
-              "name": "test-pg-3",
-              "static_ip": "192.168.72.153"
-            }
-          ]
-        }"""
+    with open("config/tests.json") as fh:
+        cluster_json = json.load(fh)
 
     def __init__(self):
-        self.cluster = Cluster(None, json.loads(self.cluster_json))
+        self.cluster = Cluster(None, self.cluster_json)
         self.cluster.deploy()
         sleep(40)
-        return
+        # return
         self.cluster.ha_standby_all()
         sleep(10)  # let vms settle a bit before taking snapshots
         # pause vms
@@ -54,7 +29,7 @@ class ClusterContext:
             vm.vm_take_snapshot("snapshot1")
 
     def setup(self):
-        return
+        # return
         # power off vm
         for vm in self.cluster.vms:
             try:
@@ -77,7 +52,7 @@ class ClusterContext:
 def cluster_context():
     context = ClusterContext()
     yield context
-    return
+    # return
     for vm in context.cluster.vms:
         try:
             print(vm.vm_poweroff())
@@ -95,8 +70,9 @@ def test_simple_replication1(cluster_context):
     cluster = cluster_context.cluster
     master = cluster.master
 
-    master.pg_execute("update person.addresstype set name='test12' "
-                      "where addresstypeid=1", db=DB)
+    master.pg_execute(
+        "update person.addresstype set name='test12' where addresstypeid=1",
+        db=DB)
     select_sql = "select name from person.addresstype where addresstypeid=1"
     rs = master.pg_execute(select_sql, db=DB)
     assert 'test12' == rs[0][0]
@@ -134,6 +110,28 @@ def test_pcs_standby(cluster_context):
     assert 'test12' == rs[0][0]
 
 
+def pg_execute_timeout(query_func, result, timeout):
+    start_time = time()
+    while True:
+        if query_func() == result:
+            return True
+        if time() - start_time > timeout:
+            return False
+        sleep(0.25)
+
+
+def expect_nodes_timeout(vm, expected_nodes, timeout):
+    start_time = time()
+    while True:
+        nodes = set(vm.ssh_run("crm_node -p", get_output=True).split())
+        print("nodes in cluster: " + str(nodes))
+        if nodes == expected_nodes:
+            return True
+        if time() - start_time > timeout:
+            return False
+        sleep(1)
+
+
 def test_kill_standby(cluster_context):
     """
     Action: poweroff a standby
@@ -148,34 +146,34 @@ def test_kill_standby(cluster_context):
     """
     cluster_context.setup()
     cluster = cluster_context.cluster
+    master = cluster.master
 
     killed_standby = cluster.standbies[-1]
     other_standbies = cluster.standbies[:-1]
-    master = cluster.master
     killed_standby.vm_poweroff()
-    sleep(15)
     remaining_nodes = {master.name}
     for standby in other_standbies:
         remaining_nodes.add(standby.name)
-    crm_nodes = set(master.ssh_run("crm_node -p", get_output=True).split())
-    assert remaining_nodes == crm_nodes
+
+    assert expect_nodes_timeout(master, remaining_nodes, 20), \
+        "Standby takes too long to be removed from cluster"
+
     master.pg_execute(
-        "update person.addresstype "
-        "set name='test12' where addresstypeid=1", db=DB)
-    sleep(0.5)
+        "update person.addresstype set name='a' where addresstypeid=1", db=DB)
     select_sql = "select name from person.addresstype where addresstypeid=1"
     for standby in other_standbies:
-        rs = standby.pg_execute(select_sql, db=DB)
-        assert 'test12' == rs[0][0]
+        assert pg_execute_timeout(partial(standby.pg_execute, select_sql, db=DB),
+                                  [['a']], 3)
+        # rs = standby.pg_execute(select_sql, db=DB)
+        # assert 'a' == rs[0][0]
     killed_standby.vm_start()
     sleep(15)
     cluster.ha_start_all()
-    sleep(25)
     all_nodes = {vm.name for vm in cluster.vms}
-    crm_nodes = set(master.ssh_run("crm_node -p", get_output=True).split())
-    assert all_nodes == crm_nodes
-    rs = killed_standby.pg_execute(select_sql, db=DB)
-    assert 'test12' == rs[0][0]
+    assert expect_nodes_timeout(master, all_nodes, 25), \
+        "Standby takes too long to be back in cluster"
+    assert pg_execute_timeout(partial(standby.pg_execute, select_sql, db=DB),
+                              [['a']], 3)
 
 
 def test_kill_master(cluster_context):
@@ -224,7 +222,7 @@ def test_kill_master(cluster_context):
     # cluster.master = cluster.standbies[0]
     to_start = " ".join(vm.name for vm in cluster.standbies)
     cluster.standbies[0].ssh_run_check(f"pcs cluster start {to_start}")
-    sleep(5)
+    sleep(20)
     cluster.standbies[0].ssh_run_check(f"crm_resource --cleanup")  # HACK
     master.vm_start()
     sleep(20)

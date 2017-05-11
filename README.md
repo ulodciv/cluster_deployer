@@ -30,6 +30,12 @@ Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
 # TODO
 
 - Issues:
+
+	- Perhaps the RA could try to clean up a crashed master instance by starting 
+	it and shutting it down
+
+    - In all cases, RA should cancel promote of a slave that has a diverging timeline.
+ 
     - RA should report a non replicating slave as down, somehow. This can 
     possibly be done with replication slots and inspecting the ouptut of 
             
@@ -43,8 +49,6 @@ Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
             on timeline 2 is not in this server's history
             DETAIL:  This server's history forked from timeline 2 at 0/80001A8.
             
-	- Perhaps the RA could try to clean up a crashed master instance by starting 
-	it and shutting it down
 
 - Make deployer work on Linux (shouldn't require too much work)
 
