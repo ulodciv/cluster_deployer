@@ -653,8 +653,7 @@ def _master_score_exists():
 
 # Setting attributes is asynchronous, so return as soon as truly done
 def set_promotion_score(score, node=None):
-    if type(score) is not str:
-        score = str(score)
+    score = str(score)
     cmd = [get_crm_master(), "-q", "-v", score]
     if node:
         cmd.extend(["-N", node])

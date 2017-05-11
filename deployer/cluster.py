@@ -1,4 +1,5 @@
 import logging
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path, PurePosixPath
@@ -191,6 +192,54 @@ class Cluster:
 
     def ha_cib_push(self):
         self._pcs_cluster(f"cib-push {self.ha_cluster_xml_file}")
+
+    def ha_nodes_status(self):
+        o = self.master.ssh_run_check("pcs status nodes", get_output=True)
+        d = {}
+        for l in o.splitlines():
+            stripped = l.strip()
+            if stripped.startswith("Pacemaker Nodes:"):
+                continue
+            if stripped.startswith("Pacemaker Remote Nodes:"):
+                break
+            pieces = l.strip().split()
+            d[pieces[0].strip(":")] = pieces[1:]
+        return d
+
+    def ha_resource_slaves_masters(self, clone_id):
+        """
+        crm_mon -> resources -> clone -> [resource1, resource2, ...]
+        """
+        slaves = []
+        masters = []
+        o = self.master.ssh_run_check("pcs status xml", get_output=True)
+        root = ET.fromstring(o)
+        for child1 in root:
+            if child1.tag != "resources":
+                continue
+            for child2 in child1:
+                if child2.tag != "clone" or child2.attrib["id"] != clone_id:
+                    continue
+                for child3 in child2:
+                    if child3.tag != "resource":
+                        continue
+                    if child3.attrib["failed"] == "true":
+                        continue
+                    if child3.attrib["active"] != "true":
+                        continue
+                    if child3.attrib["role"] == "Slave":
+                        for child4 in child3:
+                            slaves.append(child4.attrib["name"])
+                    if child3.attrib["role"] == "Master":
+                        for child4 in child3:
+                            masters.append(child4.attrib["name"])
+        return slaves, masters
+
+    def ha_resource_slaves(self, clone_id):
+        return self.ha_resource_slaves_masters(clone_id)[0]
+
+    def ha_resource_masters(self, clone_id):
+        return self.ha_resource_slaves_masters(clone_id)[1]
 
     def _pcs_xml(self, what):
         self.master.ssh_run_check(f"pcs -f {self.ha_cluster_xml_file} {what}")
