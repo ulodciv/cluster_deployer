@@ -44,8 +44,8 @@ PGSTART_OPTS = "'-c config_file={}/postgresql.conf'"
 TPL = """\
 standby_mode = on
 recovery_target_timeline = latest
-primary_conninfo = 'host=/var/run/postgresql port={} user={} application_name={}'
-""".format(PGPORT_MASTER, PGUSER, UNAME)
+primary_conninfo = 'host=/var/run/postgresql port={} user={}'
+""".format(PGPORT_MASTER, PGUSER)
 CONF_ADDITIONS = """
 listen_addresses = '*'
 port = {}
@@ -184,8 +184,6 @@ primary_conninfo = 'port={}'
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_start())
         # check if it is connecting to the master
         self.set_env_to_master()
-        self.assertEqual("centos-pg-1",
-                         RA.get_connected_standbies()[0].application_name)
 
     def test_ra_action_stop(self):
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_stop())
@@ -341,7 +339,7 @@ class TestHa(unittest.TestCase):
 
 class TestRegExes(unittest.TestCase):
     TPL = """\
-primary_conninfo = 'user={} host=127.0.0.1 port=15432 application_name=pc1234.home'
+primary_conninfo = 'user={} host=127.0.0.1 port=15432'
 recovery_target_timeline = 'latest'
 """.format(PGUSER)
     cluster_state = """\
@@ -354,11 +352,6 @@ pg_control last modified:             Fri 31 Mar 2017 10:01:29 PM CEST
     def test_tpl_file(self):
         m = re.search(RA.RE_TPL_TIMELINE, TestRegExes.TPL, re.M)
         self.assertIsNotNone(m)
-
-    def test_app_name(self):
-        m = re.findall(RA.RE_APP_NAME, TestRegExes.TPL, re.M)
-        self.assertIsNotNone(m)
-        self.assertEqual(m[0], "pc1234.home")
 
     def test_pg_cluster_state(self):
         m = re.findall(RA.RE_PG_CLUSTER_STATE, TestRegExes.cluster_state, re.M)

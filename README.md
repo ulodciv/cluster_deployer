@@ -3,8 +3,7 @@ Easily deploy clusters of 2+ nodes with resilisent replicated Postgresql. The
 purpose of this application is to assist in the preparation of clusters to 
 run tests and validate that the postgresl resource agent works properly. 
 
-Runs using VirtualBox Windows, and should run on other UNIX-likes with little 
-changes.
+Runs using VirtualBox on Windows, and probable UNIX-likes with minor changes.
 
 Requires Python 3.6 using external module Paramiko.
 

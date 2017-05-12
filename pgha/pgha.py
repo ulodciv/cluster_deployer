@@ -33,7 +33,6 @@ OCF_FAILED_MASTER = 9
 RE_WAL_LEVEL = r"^wal_level setting:\s+(.*?)\s*$"
 RE_TPL_TIMELINE = r"^\s*recovery_target_timeline\s*=\s*'?latest'?\s*$"
 RE_STANDBY_MODE = r"^\s*standby_mode\s*=\s*'?on'?\s*$"
-RE_APP_NAME = r"^\s*primary_conninfo\s*=.*['\s]application_name=(?P<n>.*?)['\s]"
 RE_PG_CLUSTER_STATE = r"^Database cluster state:\s+(.*?)\s*$"
 pguser_default = "postgres"
 bindir_default = "/usr/bin"
@@ -344,41 +343,6 @@ def get_ha_nodes():
     except CalledProcessError as e:
         log_err("{} failed with return code {}", e.cmd, e.returncode)
         sys.exit(OCF_ERR_GENERIC)
-
-
-def get_connected_standbies():
-    # We check locations of connected standbies by querying the
-    # "pg_stat_replication" view.
-    # The row_number applies on the result set ordered on write_location ASC so
-    # the highest row_number should be given to the closest node from the
-    # master, then the lowest node name (alphanumeric sort) in case of equality.
-    # The result set itself is order by priority DESC to process best known
-    # candidate first.
-    query = """\
-SELECT application_name, priority, location, state
-FROM (
-    SELECT application_name,
-    1000 - (
-        row_number() OVER (
-            PARTITION BY state IN ('startup', 'backup')
-            ORDER BY write_location ASC, application_name ASC
-        ) - 1
-    ) * 10 AS priority,
-    write_location AS location, state
-    FROM (
-        SELECT application_name, write_location, state
-        FROM pg_stat_replication
-    ) AS s2
-) AS s1
-ORDER BY priority DESC"""
-    rc, rs = pg_execute(query)
-    if rc != 0:
-        log_err("query to get standby locations failed ({})", rc)
-        sys.exit(OCF_ERR_GENERIC)
-    if not rs:
-        log_warn("no standby connected")
-    nt = namedtuple("nt", "application_name priority location state")
-    return [nt(*r) for r in rs]
 
 
 def set_standbies_scores():
@@ -726,7 +690,7 @@ def add_replication_slots(slave_nodes):
     slots = [r[0] for r in rs]
     for node in slave_nodes:
         if node == nodename:
-            continue
+            continue  # TODO: is this check necessary?
         slot = node.replace('-', '_') + "_slot"
         if slot in slots:
             continue
@@ -738,6 +702,29 @@ def add_replication_slots(slave_nodes):
             return False
         log_debug("added replication slot {}".format(slot))
     return True
+
+
+def kill_wal_senders(slave_nodes):
+    nodename = get_ocf_nodename()
+    rc, rs = pg_execute("SELECT slot_name "
+                        "FROM pg_replication_slots "
+                        "WHERE active_pid IS NOT NULL")
+    slots = [r[0] for r in rs]
+    for node in slave_nodes:
+        if node == nodename:
+            continue  # TODO: is this check necessary?
+        slot = node.replace('-', '_') + "_slot"
+        if slot not in slots:
+            continue
+        # SELECT pg_terminate_backend(active_pid)
+        # FROM pg_replication_slots
+        # WHERE slot_name='test3_slot' AND active_pid IS NOT NULL;
+        rc, rs = pg_execute(
+            "SELECT pg_terminate_backend(active_pid) "
+            "FROM pg_replication_slots "
+            "WHERE slot_name='{}' AND active_pid IS NOT NULL".format(slot))
+        if rs:
+            log_info("killed active wal sender for slot {}".format(slot))
 
 
 def delete_replication_slots():
@@ -1028,8 +1015,10 @@ def notify_pre_start(nodes):
     :return: OCF_SUCCESS is all goes well (sole possibility AFAICT)
     """
     if get_ocf_nodename() in nodes["master"]:
-        log_info("this node is a Master: add any missing replication slots")
+        log_info("add any missing replication slots")
         add_replication_slots(nodes["start"])
+        log_info("kill any active orphaned wal sender")
+        kill_wal_senders(nodes["start"])
     return OCF_SUCCESS
 
 
@@ -1109,12 +1098,6 @@ def ocf_validate_all():
     if not re.search(RE_TPL_TIMELINE, content, re.M):
         log_crit("Recovery template lacks 'recovery_target_timeline = latest'")
         sys.exit(OCF_ERR_ARGS)
-    m = re.findall(RE_APP_NAME, content, re.M)
-    if not m or not m[0].startswith(get_ocf_nodename()):
-        log_crit("Recovery template lacks application_name={} in "
-                 "primary_conninfo", get_ocf_nodename())
-        sys.exit(OCF_ERR_ARGS)
-    # check system user
     try:
         pwd.getpwnam(get_pguser())
     except KeyError:

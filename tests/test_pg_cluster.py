@@ -48,7 +48,7 @@ class ClusterContext:
 def cluster_context():
     context = ClusterContext()
     yield context
-    return
+    # return
     for vm in context.cluster.vms:
         try:
             print(vm.vm_poweroff())
@@ -161,6 +161,7 @@ def test_kill_standby(cluster_context):
     killed_standby.vm_start()
     sleep(15)
     cluster.ha_start_all()
+    sleep(5)  # HACK: this should not be necessary
     all_nodes = {vm.name for vm in cluster.vms}
     assert expect_online_nodes(cluster, all_nodes, 25)
     sleep(1)
@@ -219,6 +220,7 @@ def test_kill_master(cluster_context):
 
     for standby in standbies:
         cluster.ha_start(standby)
+    sleep(5)  # HACK: this should not be necessary
     assert expect_online_nodes(
         cluster, {vm.name for vm in standbies}, 25)
     sleep(10)

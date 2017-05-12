@@ -169,12 +169,12 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_set_param("max_wal_senders", "5")
         self.pg_set_param("wal_keep_segments", "32")
         self.pg_set_param("max_replication_slots", len(all_hosts))
-        self.pg_set_param("archive_mode", "on")
-        self.pg_set_param("archive_command", "'cp %p ../../wals_from_this/%f'")
+        # self.pg_set_param("archive_mode", "on")
+        # self.pg_set_param("archive_command", "'cp %p ../../wals_from_this/%f'")
         self.pg_set_param("listen_addresses", "'*'")
         self.pg_set_param("hot_standby", "on")
         # to be removed once  replication slots work
-        self.pg_set_param("hot_standby_feedback", "on")
+        # self.pg_set_param("hot_standby_feedback", "on")
 
     def pg_write_recovery_for_pcmk(self, virtual_ip):
         repl_user = self.pg_repl_user
@@ -191,9 +191,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         #     "restore_command",
         #     f"rsync -pog {virtual_ip}:wals_from_this/%f %p")
         self._pg_add_to_pcmk_recovery_conf(
-            "primary_conninfo",
-            f"host={virtual_ip} port=5432 user={repl_user} "
-            f"application_name={self.name}")
+            "primary_conninfo", f"host={virtual_ip} port=5432 user={repl_user}")
         self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
 
     def pg_standby_backup_from_master(self, master: 'Postgres'):
