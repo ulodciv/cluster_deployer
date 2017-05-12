@@ -25,12 +25,12 @@ INST = "foo"
 os.environ['OCF_RESOURCE_INSTANCE'] = INST
 linux_distro = get_distro()
 if linux_distro == "CENTOS":
-    PGBIN = "/usr/pgsql-{}/bin".format(pgversion)
+    PGBINDIR = "/usr/pgsql-{}/bin".format(pgversion)
 elif linux_distro in ("DEBIAN", "UBUNTU"):
-    PGBIN = "/usr/lib/postgresql/{}/bin".format(pgversion)
+    PGBINDIR = "/usr/lib/postgresql/{}/bin".format(pgversion)
 else:
     raise Exception("unknown linux distro: " + linux_distro)
-os.environ['OCF_RESKEY_bindir'] = PGBIN
+os.environ['OCF_RESKEY_pgbindir'] = PGBINDIR
 os.chdir(gettempdir())
 
 PGUSER = "postgres"
@@ -84,7 +84,7 @@ class TestPg(unittest.TestCase):
     @classmethod
     def start_pg(cls, pgdata):
         run_as_pg("{}/pg_ctl start -D {} -o {} -w".format(
-            PGBIN, pgdata, PGSTART_OPTS.format(pgdata)))
+            PGBINDIR, pgdata, PGSTART_OPTS.format(pgdata)))
 
     @classmethod
     def start_pg_master(cls):
@@ -96,7 +96,7 @@ class TestPg(unittest.TestCase):
 
     @classmethod
     def stop_pg(cls, pgdata):
-        run_as_pg("{}/pg_ctl stop -D {} -w".format(PGBIN, pgdata))
+        run_as_pg("{}/pg_ctl stop -D {} -w".format(PGBINDIR, pgdata))
 
     @classmethod
     def stop_pg_master(cls):
@@ -108,7 +108,7 @@ class TestPg(unittest.TestCase):
 
     @classmethod
     def crash_stop_pg(cls, pgdata):
-        run_as_pg("{}/pg_ctl stop -D {} -w -m immediate".format(PGBIN, pgdata))
+        run_as_pg("{}/pg_ctl stop -D {} -w -m immediate".format(PGBINDIR, pgdata))
 
     @classmethod
     def cleanup(cls):
@@ -125,7 +125,7 @@ class TestPg(unittest.TestCase):
         cls.cleanup()
         # create master instance
         run_as_pg("mkdir -p -m 0700 {}".format(PGDATA_MASTER))
-        run_as_pg("{}/initdb -D {}".format(PGBIN, PGDATA_MASTER))
+        run_as_pg("{}/initdb -D {}".format(PGBINDIR, PGDATA_MASTER))
         with open(PGDATA_MASTER + "/postgresql.conf", "a") as fh:
             fh.write(CONF_ADDITIONS.format(PGPORT_MASTER))
         with open(PGDATA_MASTER + "/pg_hba.conf", "a") as fh:
@@ -246,12 +246,12 @@ primary_conninfo = 'port={}'
         write_as_pg(RA.get_recovery_pcmk(), TPL)
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
         try:
-            os.environ['OCF_RESKEY_bindir'] = "foo"
+            os.environ['OCF_RESKEY_pgbindir'] = "foo"
             with self.assertRaises(SystemExit) as cm:
                 RA.ocf_validate_all()
             self.assertEqual(cm.exception.code, RA.OCF_ERR_INSTALLED)
         finally:
-            os.environ['OCF_RESKEY_bindir'] = PGBIN
+            os.environ['OCF_RESKEY_pgbindir'] = PGBINDIR
         self.assertEqual(RA.OCF_SUCCESS, RA.ocf_validate_all())
         try:
             os.environ['OCF_RESKEY_pguser'] = "bar"

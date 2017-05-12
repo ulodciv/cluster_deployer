@@ -265,7 +265,7 @@ class Cluster:
         master = self.master
         self._pcs_xml(
             f"resource create pgsqld ocf:heartbeat:pgha "
-            f"bindir={master.pg_bindir} "
+            f"pgbindir={master.pg_bindir} "
             f"pgdata={master.pg_data_directory} "
             f"pgconf={master.pg_config_file} "
             f"op start timeout=60s "
