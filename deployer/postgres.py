@@ -31,7 +31,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         if self._pg_service is None:
             distro = self.distro
             if distro == Distro.CENTOS:
-                self._pg_service = f"postgresql-{Postgres.pg_version}"
+                self._pg_service = f"postgresql-{self.pg_version}"
             elif distro in (Distro.UBUNTU, Distro.DEBIAN):
                 self._pg_service = f"postgresql"
         return self._pg_service
@@ -43,7 +43,9 @@ class Postgres(Ssh, metaclass=ABCMeta):
             if distro == Distro.CENTOS:
                 self._pg_start_opts = ""
             elif distro in (Distro.UBUNTU, Distro.DEBIAN):
-                self._pg_start_opts = f"-c config_file=/etc/postgresql/{Postgres.pg_version}/main/postgresql.conf"
+                self._pg_start_opts = (
+                    f"-c config_file="
+                    f"/etc/postgresql/{self.pg_version}/main/postgresql.conf")
         return self._pg_start_opts
 
     @property
@@ -51,9 +53,10 @@ class Postgres(Ssh, metaclass=ABCMeta):
         if self._pg_bindir is None:
             distro = self.distro
             if distro == Distro.CENTOS:
-                self._pg_bindir = f"/usr/pgsql-{Postgres.pg_version}/bin"
+                self._pg_bindir = f"/usr/pgsql-{self.pg_version}/bin"
             elif distro in (Distro.UBUNTU, Distro.DEBIAN):
-                self._pg_bindir = f"/usr/lib/postgresql/{Postgres.pg_version}/bin"
+                self._pg_bindir = (
+                    f"/usr/lib/postgresql/{self.pg_version}/bin")
         return self._pg_bindir
 
     @property
@@ -154,42 +157,17 @@ class Postgres(Ssh, metaclass=ABCMeta):
             user=self.pg_user)
 
     def pg_make_master(self, all_hosts):
-        """
-        pg_hba.conf:
-            host replication repl1 192.168.72.102/32 trust 
-        alter system set wal_level to hot_standby;
-        alter system set max_wal_senders to 5;
-        alter system set wal_keep_segments to 32;
-        alter system set archive_mode to on;
-        alter system set archive_command to 'cp %p ../../wals_from_this/%f';
-        alter system set listen_addresses to '*';
-        systemctl restart postgresql-9.6
-        """
         self.pg_set_param("wal_level", "replica")
-        self.pg_set_param("max_wal_senders", "5")
-        self.pg_set_param("wal_keep_segments", "32")
+        self.pg_set_param("max_wal_senders", len(all_hosts) + 5)
         self.pg_set_param("max_replication_slots", len(all_hosts))
-        # self.pg_set_param("archive_mode", "on")
-        # self.pg_set_param("archive_command", "'cp %p ../../wals_from_this/%f'")
         self.pg_set_param("listen_addresses", "'*'")
         self.pg_set_param("hot_standby", "on")
-        # to be removed once  replication slots work
-        # self.pg_set_param("hot_standby_feedback", "on")
+        self.pg_set_param("hot_standby_feedback", "on")
 
     def pg_write_recovery_for_pcmk(self, virtual_ip):
         repl_user = self.pg_repl_user
-        # self.pg_stop()
-        # self.ssh_run_check([
-        #     f"mv {Postgres.pg_data_dir} data_old",
-        #     f"pg_basebackup -h {master.name} -D {Postgres.pg_data_dir} -U {repl_user} -Xs"],
-        #     self.pg_user)
-        # self._pg_add_to_conf("hot_standby", "on")
-        # self._pg_add_to_conf("hot_standby_feedback ", "on")
         self._pg_add_to_pcmk_recovery_conf("standby_mode", "on")
         self._pg_add_to_pcmk_recovery_conf("recovery_target_timeline", "latest")
-        # self._pg_add_to_pcmk_recovery_conf(
-        #     "restore_command",
-        #     f"rsync -pog {virtual_ip}:wals_from_this/%f %p")
         self._pg_add_to_pcmk_recovery_conf(
             "primary_conninfo", f"host={virtual_ip} port=5432 user={repl_user}")
         self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
@@ -200,7 +178,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         mv 9.6/data data_old
         pg_basebackup -h pg01 -D 9.6/data -U repl1 -v -P --xlog-method=stream
         postgresql.conf:
-            hot_standby = on' 
+            hot_standby = on
         recovery.conf:
             standby_mode = on
             restore_command = 'rsync -pog pg01:wals_from_this/%f %p'
@@ -213,18 +191,6 @@ class Postgres(Ssh, metaclass=ABCMeta):
             f"pg_basebackup -h {master.name} -D {master.pg_data_directory} "
             f"-U {master.pg_repl_user} -Xs"],
             user=self.pg_user)
-        """
-        # self._pg_add_to_conf("hot_standby", "on")
-        # self._pg_add_to_conf("hot_standby_feedback ", "on")
-        self._pg_add_to_recovery_conf("standby_mode", "on")
-        self._pg_add_to_recovery_conf("recovery_target_timeline", "latest")
-        self._pg_add_to_recovery_conf(
-            "restore_command",
-            f"rsync -pog {master.name}:wals_from_this/%f %p")
-        self._pg_add_to_recovery_conf(
-            "primary_conninfo",
-            f"host={master.ip} port=5432 user={master.pg_repl_user}")
-        """
         self.ssh_run_check(
             f"sed -i s/{master.name}/{self.name}/ {master.pg_pcmk_recovery_file}",
             user=self.pg_user)
