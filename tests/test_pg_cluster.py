@@ -48,7 +48,7 @@ class ClusterContext:
 def cluster_context():
     context = ClusterContext()
     yield context
-    # return
+    return
     for vm in context.cluster.vms:
         try:
             print(vm.vm_poweroff())
@@ -158,13 +158,12 @@ def test_kill_standby(cluster_context):
     for standby in other_standbies:
         assert expect_query_results(
             partial(standby.pg_execute, select_sql, db=DB), [['a']], 10)
-        # rs = standby.pg_execute(select_sql, db=DB)
-        # assert 'a' == rs[0][0]
     killed_standby.vm_start()
     sleep(15)
     cluster.ha_start_all()
     all_nodes = {vm.name for vm in cluster.vms}
     assert expect_online_nodes(cluster, all_nodes, 25)
+    sleep(1)
     assert expect_query_results(
         partial(killed_standby.pg_execute, select_sql, db=DB), [['a']], 10)
 

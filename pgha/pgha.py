@@ -1055,12 +1055,12 @@ def notify_pre_stop(nodes):
     # To avoid this, we try to start the instance in recovery from here.
     # If it succeeds, at least it will be stopped correctly with a normal
     # status. If it fails, it will be catched up in next steps.
-    log_info("pre_stop: trying to start failing standby {}", inst)
+    log_info("starting standby that was not shutdown cleanly")
     # Either the instance managed to start or it couldn't.
     # We rely on the pg_ctl '-w' switch to take care of this. If it couldn't
     # start, this error will be catched up later during the various checks
     pg_ctl_start()
-    log_info("pre_stop: state is '{}' after recovery attempt",
+    log_info("state is '{}' after recovery attempt",
              get_pgctrldata_state())
     return OCF_SUCCESS
 
