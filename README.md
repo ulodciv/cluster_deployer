@@ -11,7 +11,7 @@ Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
 
 # Usage
 
-1. Using VirtualBox on Windows, set up a VM that has:
+1. Set up a VirtualBox VM that has:
     1. the root user enabled (ie with Ubuntu)
     1. SELinux disabled
     1. VirtualBox guest additions
