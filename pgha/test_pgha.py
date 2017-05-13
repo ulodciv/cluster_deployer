@@ -294,7 +294,7 @@ class TestHa(unittest.TestCase):
 
     def test_get_set_promotion_score(self):
         RA.set_promotion_score(2, UNAME)
-        self.assertEqual("2", RA.get_master_score(UNAME))
+        self.assertEqual("2", RA.get_promotion_score(UNAME))
 
     def test_get_ha_nodes(self):
         nodes = RA.get_ha_nodes()

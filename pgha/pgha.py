@@ -1178,9 +1178,7 @@ def ocf_monitor():
     pgisready_rc = run_pgisready()
     inst = get_rcs_inst()
     if pgisready_rc == 0:
-        # PG is ready: is it a master or a standby
-        log_debug(
-            "{} is listening: let's check if it is a master or standby", inst)
+        log_debug("PG is listening, checking if it is a master or standby")
         status = get_master_or_standby(inst)
         if status == OCF_RUNNING_MASTER:
             set_standbies_scores()
@@ -1199,11 +1197,11 @@ def ocf_monitor():
         log_err("PG now accespts connections, but it is not a standby")
         return OCF_ERR_GENERIC
     if pgisready_rc == 2:  # PG is not listening.
-        log_info("pg_isready says {} is not listening; 'pg_ctl status' will "
-                 "tell if the server is running", inst)
+        log_info("pg_isready says PG is not listening; 'pg_ctl status' will "
+                 "tell if the server is running")
         if pg_ctl_status() == 0:
             log_info("'pg_ctl status' says the server is running")
-            log_err("{} is not listening, but the server is running", inst)
+            log_err("PG is not listening, but the server is running")
             return OCF_ERR_GENERIC
         log_info("'pg_ctl status' says the server is not running")
         if backup_label_exists():
@@ -1299,8 +1297,7 @@ def ocf_demote():
     To demote a PostgreSQL instance, we must:
       - stop it gracefully
       - create recovery.conf
-      - start it back
-    """
+      - start it back """
     inst = get_rcs_inst()
     rc = get_ocf_state()
     if rc == OCF_RUNNING_MASTER:
@@ -1339,7 +1336,7 @@ def ocf_demote():
             log_err("unexpected {} state: monitor status "
                     "({}) disagree with pg_ctl return code", inst, rc)
             return OCF_ERR_GENERIC
-    # At this point, the instance **MUST** be stopped gracefully.
+    # At this point, the instance MUST be stopped gracefully.
     # What we are left to do here is to start again which will do the actual
     # demotion by mean of setting up the recovery.conf.
     rc = ocf_start()
