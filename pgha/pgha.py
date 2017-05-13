@@ -19,9 +19,7 @@ from time import sleep
 VERSION = "1.0"
 PROGRAM = "pgha"
 MIN_PG_VER = LooseVersion('9.6')
-# http://paquier.xyz/postgresql-2/postgres-9-6-feature-highlight-replication-slot-improvements/
 OCF_SUCCESS = 0
-OCF_RUNNING_SLAVE = OCF_SUCCESS
 OCF_ERR_GENERIC = 1
 OCF_ERR_ARGS = 2
 OCF_ERR_UNIMPLEMENTED = 3
@@ -45,8 +43,8 @@ OCF_META_DATA = """\
 <!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
 <resource-agent name="pgsqlha">
 <version>1.0</version>
-<longdesc lang="en">Resource script for replicated PostgreSQL. It manages 
-PostgreSQL instances using streaming replication as an HA resource.</longdesc>
+<longdesc lang="en">Multi-state PostgreSQL resource agent. It manages 
+PostgreSQL instances using streaming replication.</longdesc>
 <shortdesc lang="en">Manages replicated PostgreSQL instances</shortdesc>
 <parameters>
     <parameter name="pguser" unique="0" required="0">
@@ -184,14 +182,6 @@ def get_pacemakerd():
     return os.path.join(get_ha_bin(), "pacemakerd")
 
 
-def as_postgres_user():
-    u = pwd.getpwnam(get_pguser())
-    os.initgroups(get_pguser(), u.pw_gid)
-    os.setgid(u.pw_gid)
-    os.setuid(u.pw_uid)
-    os.seteuid(u.pw_uid)
-
-
 def get_logtag():
     global _logtag
     if not _logtag:
@@ -292,6 +282,14 @@ def run_pgisready():
     return as_postgres([get_pgisready(), "-h", get_pghost(), "-p", get_pgport()])
 
 
+def as_postgres_user():
+    u = pwd.getpwnam(get_pguser())
+    os.initgroups(get_pguser(), u.pw_gid)
+    os.setgid(u.pw_gid)
+    os.setuid(u.pw_uid)
+    os.seteuid(u.pw_uid)
+
+
 def as_postgres(cmd):
     cmd = [str(c) for c in cmd]
     log_debug("as {}: {}", get_pguser(), " ".join(cmd))
@@ -356,8 +354,7 @@ def set_standbies_scores():
     - Master has score 1001
     - Standbies get 999, 998, ...
     - Bad nodes get -1
-    - Unknown nodes get -1000
-    """
+    - Unknown nodes get -1000 """
     nodename = get_ocf_nodename()
     nodes_to_score = get_ha_nodes()
     rc, rs = pg_execute(
@@ -410,7 +407,6 @@ def set_standbies_scores():
 def get_master_or_standby(inst):
     """ Confirm if the instance is really started as pgisready stated and
     if the instance is master or standby
-
     Return OCF_SUCCESS or OCF_RUNNING_MASTER or OCF_ERR_GENERIC or
     OCF_ERR_CONFIGURED """
     rc, rs = pg_execute("SELECT pg_is_in_recovery()")
@@ -454,7 +450,6 @@ def get_pgctrldata_state():
 def get_non_transitional_pg_state(inst):
     """ Loop until pg_controldata returns a non-transitional state.
     Used to find out if this instance is a master or standby.
-
     Return OCF_RUNNING_MASTER or OCF_SUCCESS or OCF_NOT_RUNNING  """
     while True:
         state = get_pgctrldata_state()
@@ -482,9 +477,7 @@ def get_non_transitional_pg_state(inst):
 
 def pg_ctl_status():
     """ checks whether PG is running
-
-    Return 0 if the server is running, 3 otherwise
-    """
+    Return 0 if the server is running, 3 otherwise """
     return as_postgres([get_pgctl(), "status", "-D", get_pgdata()])
 
 
@@ -553,8 +546,7 @@ def create_recovery_conf():
     """ Write recovery.conf. It must include:
     standby_mode = on
     primary_conninfo = '...'
-    recovery_target_timeline = latest
-    """
+    recovery_target_timeline = latest """
     u = pwd.getpwnam(get_pguser())
     uid, gid = u.pw_uid, u.pw_gid
     recovery_file = os.path.join(get_pgdata(), "recovery.conf")
@@ -648,7 +640,7 @@ def ocf_promote():
         log_info("unexpected error, cannot promote {}", inst)
         return OCF_ERR_GENERIC
     #
-    # At this point, the instance **MUST** be started as a standby.
+    # At this point, the instance MUST be started as a standby.
     #
     # Cancel the switchover if it has been considered unsafe during pre-promote
     if get_ha_private_attr("cancel_switchover") == "1":
@@ -739,7 +731,6 @@ def delete_replication_slots():
 def confirm_this_node_should_be_promoted():
     """ Find out if this node is truly the one to promote. If not, also update
     the scores.
-
     Return True if this node has the highest lsn_location, False otherwise """
     # The standby with the highest master score gets promoted, as set during the
     # last monitor on the previous master (see set_standbies_scores).
@@ -830,11 +821,9 @@ def check_switchover(nodes):
     received the shutdown checkpoint from the old master to make sure it can
     take over the master role and the old master will be able to catchup as a
     standby after.
-
     Return 0 if switchover is safe
            1 if swithcover is not safe
-           2 for internal error
-    """
+           2 for internal error """
     log_info("switch from {} to {} in progress, checking last record in WAL",
              nodes["demote"][0], get_ocf_nodename())
     # Force a checpoint to make sure the controldata shows the very last TL
@@ -1004,7 +993,6 @@ def notify_pre_start(nodes):
     """ If this is a Master:
         - add any missing replication slots
         - kill any active orphaned wal sender
-
     Return OCF_SUCCESS (sole possibility AFAICT) """
     if get_ocf_nodename() in nodes["master"]:
         add_replication_slots(nodes["start"])
@@ -1022,7 +1010,7 @@ def notify_pre_stop(nodes):
     # do nothing if this is not a standby recovery
     standby_recovery = (this_node in nodes["slave"] and
                         this_node in nodes["start"])
-    if not standby_recovery or rc != OCF_RUNNING_SLAVE:
+    if not standby_recovery or rc != OCF_SUCCESS:
         return OCF_SUCCESS
     # in case of standby crash, we need to detect if the CRM tries to recover
     # the slaveclone. The usual transition is to do: stop->start
