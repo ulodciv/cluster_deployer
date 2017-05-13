@@ -3,21 +3,23 @@ Easily deploy clusters of 2+ nodes with resilisent replicated Postgresql. The
 purpose of this application is to assist in the preparation of clusters to 
 run tests and validate that the postgresl resource agent works properly. 
 
-Runs on Linux or Windows with Python 3.6 using external module Paramiko.
-
-VirtualBox is required.
-
-Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
+Runs on Linux or Windows with:
+- Python 3.6 using external module Paramiko.
+- VirtualBox
+- A pre-configured OVA running:
+    - CentOS/RHEL 7
+    - Debian 9
+    - Ubuntu Zesty
 
 # Usage
 
 1. Set up a VirtualBox VM that has:
-    1. the root user enabled (ie with Ubuntu)
-    1. SELinux disabled
-    1. VirtualBox guest additions
-    1. Postgresql server 9.6 
-    1. pcs enabled (disable corosync and pacemaker services)
-
+    - SELinux disabled
+    - VirtualBox guest additions
+    - Postgresql 9.6 
+    - pcs enabled (disable corosync and pacemaker services)
+    - Enable root account (when using Ubuntu)
+    
 1. Export the VM as an OVA file 
     
 1. Update the JSON cluster file as needed (config\cluster.json)

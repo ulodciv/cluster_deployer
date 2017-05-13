@@ -1,17 +1,18 @@
 #!/usr/bin/python2.7
 from __future__ import division, print_function, unicode_literals
-import os
+
 import json
+import os
 import pwd
 import re
 import sys
 import tempfile
-from datetime import datetime
-from itertools import chain
-from subprocess import call, check_output, CalledProcessError, STDOUT
 from collections import defaultdict, OrderedDict
+from datetime import datetime
 from distutils.version import LooseVersion
 from functools import partial
+from itertools import chain
+from subprocess import call, check_output, CalledProcessError, STDOUT
 from tempfile import gettempdir
 from time import sleep
 
@@ -370,7 +371,7 @@ def set_standbies_scores():
     # with an acceptable state.
     for i, (slot_name, restart_lsn, active_pid) in enumerate(rs):
         for node in nodes_to_score:
-            if node.replace('-', '_') + "_slot" == slot_name:
+            if node.replace('-', '_') == slot_name:
                 node_to_score = node
                 break
         else:
@@ -687,7 +688,7 @@ def add_replication_slots(slave_nodes):
     for node in slave_nodes:
         if node == nodename:
             continue  # TODO: is this check necessary?
-        slot = node.replace('-', '_') + "_slot"
+        slot = node.replace('-', '_')
         if slot in slots:
             continue
         rc, rs = pg_execute(
@@ -709,7 +710,7 @@ def kill_wal_senders(slave_nodes):
     for node in slave_nodes:
         if node == nodename:
             continue  # TODO: is this check necessary?
-        slot = node.replace('-', '_') + "_slot"
+        slot = node.replace('-', '_')
         if slot not in slots:
             continue
         rc, rs = pg_execute(

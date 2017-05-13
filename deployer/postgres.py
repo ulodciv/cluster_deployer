@@ -16,7 +16,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         super(Postgres, self).__init__(**kwargs)
         self.pg_user = pg_user
         self.pg_repl_user = pg_repl_user
-        self.pg_slot = f"{self.name.replace('-', '_')}_slot"
+        self.pg_slot = self.name.replace('-', '_')
         self._pg_service = None
         self._pg_data_directory = None
         self._pg_hba_file = None
@@ -183,7 +183,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             standby_mode = on
             restore_command = 'rsync -pog pg01:wals_from_this/%f %p'
             primary_conninfo = 'host=192.168.72.101 port=5432 user=repl1'
-            primary_slot_name = 'node_a_slot'
+            primary_slot_name = 'node_a'
         systemctl start postgresql-9.6
         """
         self.ssh_run_check([

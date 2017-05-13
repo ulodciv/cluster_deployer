@@ -114,7 +114,7 @@ class Vbox(VmBase):
         self.run_vboxmanage(f'snapshot {self.name} restore {snapshot_name}')
 
     def vm_start(self):
-        self.run_vboxmanage(f'startvm {self.name}')
+        self.run_vboxmanage(f'startvm {self.name} --type headless')
 
     def run_vboxmanage(self, args):
         if type(args) is str:
@@ -194,7 +194,7 @@ class Vbox(VmBase):
             hostonlyif = self.get_vbox_hostonly_ifs()[0]
             self.run_vboxmanage(
                 f'modifyvm {name} --hostonlyadapter1 "{hostonlyif}"')
-            self.run_vboxmanage(f'startvm {name}')
+            self.vm_start()
             self.boot_sleep()
         self._get_ip()
         self.log(f"vm {self.name} is running with ip {self.ip}")
