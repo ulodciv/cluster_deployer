@@ -142,13 +142,19 @@ class Linux(VmBase, metaclass=ABCMeta):
     def wait_until_port_is_open(self, port, timeout):
         start_time = time()
         while True:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            result = sock.connect_ex((self.ip, port))
-            if result == 0:
-                return True
-            if time() - start_time > timeout:
-                return False
-            sleep(0.1)
+            try:
+                self.log(f"checking if {self.ip}:{port} is listening")
+                socket.create_connection((self.ip, port), 2)
+            except (socket.timeout, OSError):
+                self.log(f"{self.ip}:{port} is not listening")
+                if time() - start_time > timeout:
+                    self.log(
+                        f"timed out checking if {self.ip}:{port} is listening")
+                    return False
+                sleep(0.1)
+                continue
+            self.log(f"{self.ip}:{port} is listening")
+            return True
 
     def setup_users(self):
         """
@@ -256,18 +262,7 @@ class Linux(VmBase, metaclass=ABCMeta):
         sleep(sleep_for)
         self.log(f"slept {sleep_for} seconds")
         self.log(f"testing ssh connection to {self.ip}...")
-        attempts = 0
-        while True:
-            try:
-                attempts += 1
-                with self.open_ssh() as _:
-                    self.log(f"connection sucessful, IP is now {self.ip}")
-                    return
-            except NoValidConnectionsError as e:
-                if attempts > 20:
-                    raise DeployerError(
-                        f"failed connecting to {self.ip} too many times")
-                self.log(f"failed to connect on attempt {attempts}\n"
-                         f"go this error: {e}")
-                self.log(f"will try again in 1 second")
-                sleep(1)
+        if not self.wait_until_port_is_open(22, 20):
+            raise DeployerError(
+                f"timed out waiting after {self.ip}:22 to be open")
+        self.log(f"connection sucessful, IP is now {self.ip}")
