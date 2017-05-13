@@ -1,4 +1,5 @@
 import logging
+import platform
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
@@ -29,6 +30,8 @@ class Cluster:
 
     @staticmethod
     def find_vboxmanage():
+        if platform.system() == "Linux":
+            return "vboxmanage"
         res = run("where vboxmanage.exe", stdout=PIPE, stderr=PIPE)
         if not res.returncode:
             return res.stdout.decode().strip()

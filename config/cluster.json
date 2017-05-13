@@ -1,5 +1,5 @@
 {
-  "ova": "../centos7.ova",
+  "ova": "../centos.ova",
   "cluster_name": "PgCluster",
   "virtual_ip": "192.168.72.201",
   "users": ["root", "postgres", "repl1"],

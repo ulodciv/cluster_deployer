@@ -1,8 +1,12 @@
 {
-  "ova": "D:/ovas/centos7_3.ova",
+  "ova": "/mnt/c/dev/centos7_6.ova",
   "cluster_name": "PgCluster",
   "virtual_ip": "192.168.72.251",
-  "users": ["root", "postgres", "repl1"],
+  "users": [
+    "root",
+    "postgres",
+    "repl1"
+  ],
   "pg_ra": "pgha/pgha.py",
   "pg_user": "postgres",
   "pg_repl_user": "repl1",
