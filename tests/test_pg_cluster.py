@@ -38,9 +38,10 @@ class ClusterContext:
             vm.vm_restore_snapshot("snapshot1")
         sleep(5)
         for vm in self.cluster.vms:
-            sleep(0.1)
             vm.vm_start()
-        sleep(3)
+        sleep(2)
+        for vm in self.cluster.vms:
+            vm.wait_until_port_is_open(22, 10)
         self.cluster.ha_unstandby_all()
         sleep(35)
 

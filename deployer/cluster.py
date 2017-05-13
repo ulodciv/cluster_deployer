@@ -301,6 +301,7 @@ class PostgresVboxVm(Vbox, Postgres):
     def deploy(self, vms):
         self.vm_deploy(False)
         self.vm_start_and_get_ip(False)
+        self.wait_until_port_is_open(22, 10)
         self.setup_users()
         self.set_hostname()
         self.set_static_ip()

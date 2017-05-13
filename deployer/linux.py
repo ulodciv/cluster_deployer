@@ -1,10 +1,11 @@
 import re
+import socket
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
 from contextlib import contextmanager
 from enum import Enum, auto
 from ipaddress import IPv4Interface
-from time import sleep
+from time import sleep, time
 
 from paramiko.ssh_exception import NoValidConnectionsError
 
@@ -137,6 +138,17 @@ class Linux(VmBase, metaclass=ABCMeta):
             o = self.ssh_run_check("getenforce", get_output=True)
             self._selinux_is_active = o.strip().lower() == "enforcing"
         return self._selinux_is_active
+
+    def wait_until_port_is_open(self, port, timeout):
+        start_time = time()
+        while True:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            result = sock.connect_ex((self.ip, port))
+            if result == 0:
+                return True
+            if time() - start_time > timeout:
+                return False
+            sleep(0.1)
 
     def setup_users(self):
         """
