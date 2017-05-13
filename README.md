@@ -3,9 +3,9 @@ Easily deploy clusters of 2+ nodes with resilisent replicated Postgresql. The
 purpose of this application is to assist in the preparation of clusters to 
 run tests and validate that the postgresl resource agent works properly. 
 
-Runs using VirtualBox on Windows, and probably on UNIX-likes with minor changes.
+Runs on Linux or Windows with Python 3.6 using external module Paramiko.
 
-Requires Python 3.6 using external module Paramiko.
+VirtualBox is required.
 
 Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
 
@@ -33,8 +33,8 @@ Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
 	- Perhaps the RA could try to clean up a crashed master instance by starting 
 	it and shutting it down
 
-    - RA should (optionally ?) report a non replicating slave as down. This can 
-    possibly be done with replication slots and inspecting the ouptut of 
+ 	- RA should (optionally ?) report a non replicating slave as down. This can 
+	possibly be done with replication slots and inspecting the ouptut of 
             
             SELECT * FROM pg_replication_slots
              
@@ -45,8 +45,5 @@ Deploys nodes running CentOS/RHEL 7, Debian 9 or Ubuntu Zesty.
             FATAL:  could not start WAL streaming: ERROR:  requested starting point 0/9000000 
             on timeline 2 is not in this server's history
             DETAIL:  This server's history forked from timeline 2 at 0/80001A8.
-            
-
-- Make deployer work on Linux (shouldn't require too much work)
 
 - Make deployer work on QEMU and VMWare.
