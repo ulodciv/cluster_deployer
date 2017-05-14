@@ -7,8 +7,6 @@ from enum import Enum, auto
 from ipaddress import IPv4Interface
 from time import sleep, time
 
-from paramiko.ssh_exception import NoValidConnectionsError
-
 from deployer_error import DeployerError
 from hosts_file import CentOsConfigFile
 from vm import VmBase

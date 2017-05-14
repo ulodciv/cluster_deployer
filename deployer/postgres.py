@@ -209,9 +209,6 @@ class Postgres(Ssh, metaclass=ABCMeta):
     def pg_drop_user(self, user):
         self.pg_execute(f"DROP USER {user}")
 
-    def pg_create_wal_dir(self):
-        self.ssh_run_check('mkdir -p wals_from_this', user=self.pg_user)
-
     def pg_stop(self):
         self.ssh_run_check(f"systemctl stop {self.pg_service}")
 

@@ -92,6 +92,20 @@ def expect_online_nodes(cluster, expected_nodes, timeout):
         sleep(1)
 
 
+def expect_master_node(cluster, expected_master, timeout):
+    start_time = time()
+    while True:
+        masters = cluster.ha_resource_masters("pgsql-ha")
+        if masters == [expected_master]:
+            print(f"got expected masters in cluster: {masters}")
+            return True
+        print(f"did not get expected masters in cluster, "
+              f"expected: {[expected_master]}, got {masters}")
+        if time() - start_time > timeout:
+            return False
+        sleep(1)
+
+
 def test_simple_replication1(cluster_context):
     cluster_context.setup()
     cluster = cluster_context.cluster
@@ -177,7 +191,8 @@ def test_kill_master(cluster_context):
     Action: poweroff master
     Action: poweron standbies
     Action: pcs cluster start standby1, standby2
-    Check: a standby became Master
+    Check: a standby became Master, the last one most up to date
+    TODO:
     Action: poweron Master
     Action: pcs cluster start <previous master>
     Check: replication from previous master works again
@@ -198,6 +213,7 @@ def test_kill_master(cluster_context):
     def poweroff_standbies():
         for stdby in cluster.standbies:
             stdby.vm_poweroff()
+            sleep(3)  # make last standby more up to date
 
     def raise_first(futures):
         for future in as_completed(futures):
@@ -206,19 +222,23 @@ def test_kill_master(cluster_context):
 
     with ThreadPoolExecutor() as e:
         raise_first([
-            e.submit(run_updates_until_error), e.submit(poweroff_standbies)])
+            e.submit(run_updates_until_error),
+            e.submit(poweroff_standbies)])
 
     master.vm_poweroff()
 
     for standby in cluster.standbies:
         standby.vm_start()
-
     sleep(20)
+    for standby in cluster.standbies:
+        standby.wait_until_port_is_open(22, 30)
+
     # cluster.master = cluster.standbies[0]
     standbies = cluster.standbies
+    new_master = standbies[-1]
     killed_master = master
-    master = cluster.standbies[0]
-    cluster.master = master
+    remaining_standbies = standbies[:-1]
+    cluster.master = new_master
 
     for standby in standbies:
         cluster.ha_start(standby)
@@ -226,7 +246,8 @@ def test_kill_master(cluster_context):
     assert expect_online_nodes(
         cluster, {vm.name for vm in standbies}, 25)
     sleep(10)
-    master.ssh_run_check(f"crm_resource --cleanup")  # HACK
-    killed_master.vm_start()
+    new_master.ssh_run_check(f"crm_resource --cleanup")  # HACK
+    assert expect_master_node(cluster, new_master.name, 25)
+    # killed_master.vm_start()
     # sleep(20)
-    # cluster.ha_start(master)
+    # cluster.ha_start(killed_master)

@@ -306,7 +306,6 @@ class PostgresVboxVm(Vbox, Postgres):
         self.set_hostname()
         self.set_static_ip()
         self.add_hosts_to_etc_hosts(vms)
-        self.pg_create_wal_dir()
 
     def deploy_demo_db(self, demo_db_file):
         local_db_file = Path(demo_db_file)

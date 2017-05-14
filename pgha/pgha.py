@@ -839,7 +839,7 @@ def check_switchover(nodes):
     last_chk = m[0] if m else None
     # Get the last received LSN from master
     #  0/4000000
-    rc, rs = pg_execute("SELECT pg_last_xlog_receive_location()")
+    rc, rs = pg_execute("SELECT pg_last_xlog_replay_location()")
     if rc != 0:
         log_err("could not query last_xlog_receive_location ({})", rc)
         return 2
@@ -913,7 +913,7 @@ def notify_pre_promote(nodes):
     # information to check if the instance to be promoted is the best one,
     # so we can avoid a race condition between the last successful monitor
     # on the previous master and the current promotion.
-    rc, rs = pg_execute("SELECT pg_last_xlog_receive_location()")
+    rc, rs = pg_execute("SELECT pg_last_xlog_replay_location()")
     if rc != 0:
         log_warn("pre_promote: could not query the current node LSN")
         # Return code are ignored during notifications...
@@ -1274,8 +1274,7 @@ def get_ocf_state():
 
 
 def ocf_demote():
-    """ Demote the PostgreSQL instance from master to standby
-    To demote a PostgreSQL instance, we must:
+    """ Demote the PostgreSQL instance from master to standby:
       - stop it gracefully
       - create recovery.conf
       - start it back """
