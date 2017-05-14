@@ -404,7 +404,7 @@ def set_standbies_scores():
     return OCF_SUCCESS
 
 
-def get_master_or_standby(inst):
+def is_master_or_standby(inst):
     """ Confirm if the instance is really started as pgisready stated and
     if the instance is master or standby
     Return OCF_SUCCESS or OCF_RUNNING_MASTER or OCF_ERR_GENERIC or
@@ -621,52 +621,45 @@ def set_promotion_score(score, node=None):
 
 def ocf_promote():
     inst = get_rcs_inst()
-    rc = get_ocf_state()
-    if rc == OCF_SUCCESS:
-        # Running as standby. Normal, expected behavior.
-        log_debug("{} running as a standby", inst)
-    elif rc == OCF_RUNNING_MASTER:
+    state = is_master_or_standby(inst)
+    if state == OCF_RUNNING_MASTER:
         # Already a master. Unexpected, but not a problem.
-        log_info("{} running as a master", inst)
+        log_warn("PG already running as a master")
         return OCF_SUCCESS
-    elif rc == OCF_NOT_RUNNING:  # INFO this is not supposed to happen.
-        # Currently not running. Need to start before promoting.
-        log_info("{} stopped, starting it", inst)
-        rc = ocf_start()
-        if rc != OCF_SUCCESS:
-            log_err("failed to start {}", inst)
-            return OCF_ERR_GENERIC
-    else:
-        log_info("unexpected error, cannot promote {}", inst)
+    elif state != OCF_SUCCESS:
+        log_err("Unexpected error, cannot promote this node")
         return OCF_ERR_GENERIC
-    #
-    # At this point, the instance MUST be started as a standby.
-    #
-    # Cancel the switchover if it has been considered unsafe during pre-promote
-    if get_ha_private_attr("cancel_switchover") == "1":
-        log_err("switch from pre-promote action canceled")
-        del_ha_private_attr("cancel_switchover")
+    # Running as standby. Normal, expected behavior.
+    log_debug("PG running as a standby")
+    # Cancel if it has been considered unsafe during pre-promote
+    if get_ha_private_attr("cancel_promotion") == "1":
+        log_err("Promotion was cancelled during pre-promote")
+        del_ha_private_attr("cancel_promotion")
         return OCF_ERR_GENERIC
     # Do not check for a better candidate if we try to recover the master
-    # Recovery of a master is detected during pre-promote. It sets the
-    # private attribute 'recover_master' to '1' if this is a master recovery.
-    if get_ha_private_attr("recover_master") == "1":
-        log_info("recovering old master, no election needed")
+    # Recovery of a master is detected during pre-promote. It is signaled by
+    # setting the 'master_promotion' flag.
+    if get_ha_private_attr("master_promotion") == "1":
+        log_info("promoting the previous master, no need to make sure this node"
+                 "is the most up to date")
     else:
         # The best standby to promote has the highest LSN. If the current resource
         # is not the best one, we need to modify the master scores accordingly,
-        # and abort the current promotion.
+        # and abort the current promotion
         if not confirm_this_node_should_be_promoted():
             return OCF_ERR_GENERIC
+    # replication slots can be added on hot standbies, helps ensuring no WAL is
+    # missed after promotion
     if not add_replication_slots(get_ha_nodes()):
         log_err("failed to add all replication slots", inst)
         return OCF_ERR_GENERIC
     if as_postgres([get_pgctl(), "promote", "-D", get_pgdata()]) != 0:
         # Promote the instance on the current node.
-        log_err("error during promotion")
+        log_err("'pg_ctl promote' failed")
         return OCF_ERR_GENERIC
-    # promote is asynchronous: wait for it to finish (at least until teh next version
-    while get_master_or_standby(inst) != OCF_RUNNING_MASTER:
+    # promote is asynchronous: wait for it
+    # to finish (at least until the next version)
+    while is_master_or_standby(inst) != OCF_RUNNING_MASTER:
         log_debug("waiting for promote to complete")
         sleep(1)
     log_info("promote complete")
@@ -875,7 +868,7 @@ def check_switchover(nodes):
     if rc == 0 and p.search(ans):
         log_info("standby received shutdown checkpoint", get_pgctrldata_state())
         return 0
-    set_ha_private_attr("cancel_switchover", "1")
+    set_ha_private_attr("cancel_promotion", "1")
     log_info("did not received shutdown checkpoint from old master")
     return 1
 
@@ -883,18 +876,18 @@ def check_switchover(nodes):
 def notify_pre_promote(nodes):
     node = get_ocf_nodename()
     promoting = nodes["promote"][0]
-    log_info("pre_promote: promoting instance on {}", promoting)
+    log_info("{} will be promoted", promoting)
     # No need to do an election between slaves if this is recovery of the master
     if promoting in nodes["master"]:
-        log_warn("pre_promote: this is a master recovery")
+        log_warn("this is a master recovery")
         if promoting == node:
-            set_ha_private_attr("recover_master", "1")
+            set_ha_private_attr("master_promotion", "1")
         return OCF_SUCCESS
     # Environment cleanup!
     del_ha_private_attr("lsn_location")
-    del_ha_private_attr("recover_master")
+    del_ha_private_attr("master_promotion")
     del_ha_private_attr("nodes")
-    del_ha_private_attr("cancel_switchover")
+    del_ha_private_attr("cancel_promotion")
     # check for the last received entry of WAL from the master if we are
     # the designated standby to promote
     if is_switchover(nodes, node) and node in nodes["promote"]:
@@ -949,9 +942,9 @@ def notify_pre_promote(nodes):
 
 def notify_post_promote():
     del_ha_private_attr("lsn_location")
-    del_ha_private_attr("recover_master")
+    del_ha_private_attr("master_promotion")
     del_ha_private_attr("nodes")
-    del_ha_private_attr("cancel_switchover")
+    del_ha_private_attr("cancel_promotion")
     return OCF_SUCCESS
 
 
@@ -1111,8 +1104,7 @@ def ocf_start():
     if rc != 0:
         log_err("{} failed to start (rc: {})", inst, rc)
         return OCF_ERR_GENERIC
-    # Wait for the start to finish.
-    while True:
+    while True:  # Wait for the start to finish.
         rc = get_ocf_state()
         if rc != OCF_NOT_RUNNING:
             break
@@ -1168,7 +1160,7 @@ def ocf_monitor():
     inst = get_rcs_inst()
     if pgisready_rc == 0:
         log_debug("PG is listening, checking if it is a master or standby")
-        status = get_master_or_standby(inst)
+        status = is_master_or_standby(inst)
         if status == OCF_RUNNING_MASTER:
             set_standbies_scores()
         return status
@@ -1180,7 +1172,7 @@ def ocf_monitor():
         log_warn("PG server is running but refuses connections. "
                  "This should only happen on a standby that was just started.")
         loop_until_pgisready()
-        if get_master_or_standby == OCF_SUCCESS:
+        if is_master_or_standby == OCF_SUCCESS:
             log_info("PG now accepts connections, and it is a standby")
             return OCF_SUCCESS
         log_err("PG now accespts connections, but it is not a standby")
@@ -1216,7 +1208,7 @@ def get_ocf_state():
     inst = get_rcs_inst()
     if pgisready_rc == 0:
         log_debug("{} is listening", inst)
-        return get_master_or_standby(inst)
+        return is_master_or_standby(inst)
     if pgisready_rc == 1:
         # The attempt was rejected.
         # There are different reasons for this:
@@ -1237,7 +1229,7 @@ def get_ocf_state():
                 # Consistent with pg_controdata output.
                 # We can check if the instance is master or standby
                 log_debug("{} is listening", inst)
-                return get_master_or_standby(inst)
+                return is_master_or_standby(inst)
             # Still not consistent, raise an error.
             # NOTE: if the instance is a warm standby, we end here.
             # TODO raise a hard error here ?
