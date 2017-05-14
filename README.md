@@ -40,15 +40,12 @@ tests are needed to confirm the RA works properly in most scenarios.
 - Untangle code by eliminating all calls to get_ocf_state.
 
 - Perhaps the RA could try to clean up a crashed master instance by starting 
-it and shutting it down
+it and shutting it down. This would be sufficient only if the promoted slave was
+all WAL caught up with the master that crashed.
 
-- RA should (optionally ?) report a non replicating slave as down. This can 
-possibly be done with replication slots and inspecting the ouptut of 
-            
-        SELECT * FROM pg_replication_slots
-             
-- RA should block slave instances that fail to stream from Master, at least 
-with timeline fork issues, eg:
+- RA should report a slave that doesn't replicate because its
+timeline diverged as down. Perhaps this should bring the whole resource down. 
+This should not, however, occur because the RA is suppose to prevent this. 
 	
         LOG:  fetching timeline history file for timeline 3 from primary server
         FATAL:  could not start WAL streaming: ERROR:  requested starting point 0/9000000 
