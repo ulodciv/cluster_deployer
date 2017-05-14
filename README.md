@@ -7,17 +7,17 @@ It includes a modified Python translation of
 (RA) for Postgresql.
 
 There are some unit tests and functional tests (eg test PG replication, test 
-killing-adding back a slave, test "pcs stanby/unstandby" a slave), it is still a 
-WIP, and more tests are needed to confirm the RA works properly in most scenarios.
+killing-adding back a slave, test "pcs stanby/unstandby" a slave), but more 
+tests are needed to confirm the RA works properly in most scenarios.
 
-# Usage
-
-Requirements:
+# Requirements:
 
 - Linux or Windows
 - VirtualBox
 - Python >= 3.6 
 - Python module Paramiko (python -m pip install paramiko)
+
+# Usage
 
 1. Set up a VirtualBox VM that has:
     - CentOS/RHEL 7, Debian 9, or Ubuntu Zesty
