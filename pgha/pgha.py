@@ -29,9 +29,9 @@ OCF_ERR_CONFIGURED = 6
 OCF_NOT_RUNNING = 7
 OCF_RUNNING_MASTER = 8
 OCF_FAILED_MASTER = 9
-RE_WAL_LEVEL = r"^wal_level setting:\s+(.*?)\s*$"
+RE_TPL_SLOT = r"^\s*primary_slot_name\s*=\s*'?(.*?)'?\s*$"
 RE_TPL_TIMELINE = r"^\s*recovery_target_timeline\s*=\s*'?latest'?\s*$"
-RE_STANDBY_MODE = r"^\s*standby_mode\s*=\s*'?on'?\s*$"
+RE_TPL_STANDBY_MODE = r"^\s*standby_mode\s*=\s*'?on'?\s*$"
 RE_PG_CLUSTER_STATE = r"^Database cluster state:\s+(.*?)\s*$"
 pguser_default = "postgres"
 pgbindir_default = "/usr/bin"
@@ -142,6 +142,11 @@ def get_pgport():
     return os.environ.get('OCF_RESKEY_pgport', pgport_default)
 
 
+def get_pgconf():
+    return os.environ.get(
+        "OCF_RESKEY_pgconf", os.path.join(get_pgdata(), "postgresql.conf"))
+
+
 def get_recovery_pcmk():
     return os.path.join(get_pgdata(), "recovery.conf.pcmk")
 
@@ -176,10 +181,6 @@ def get_crm_master():
 
 def get_crm_node():
     return os.path.join(get_ha_bin(), "crm_node")
-
-
-def get_pacemakerd():
-    return os.path.join(get_ha_bin(), "pacemakerd")
 
 
 def get_logtag():
@@ -483,10 +484,8 @@ def pg_ctl_status():
 
 def pg_ctl_start():
     # insanely long timeout to ensure Pacemaker gives up first
-    conf = os.environ.get(
-        "OCF_RESKEY_pgconf", os.path.join(get_pgdata(), "postgresql.conf"))
     cmd = [get_pgctl(), "start", "-D", get_pgdata(), "-w", "-t", 1000000,
-           "-o", "-c config_file=" + conf]
+           "-o", "-c config_file=" + get_pgconf()]
     return as_postgres(cmd)
 
 
@@ -545,22 +544,17 @@ def confirm_stopped(inst):
 def create_recovery_conf():
     """ Write recovery.conf. It must include:
     standby_mode = on
-    primary_conninfo = '...'
-    recovery_target_timeline = latest """
+    primary_conninfo = 'host=<VIP> port=5432 user=repl1'
+    recovery_target_timeline = latest
+    primary_slot_name = <node_name> """
     u = pwd.getpwnam(get_pguser())
     uid, gid = u.pw_uid, u.pw_gid
     recovery_file = os.path.join(get_pgdata(), "recovery.conf")
     recovery_tpl = get_recovery_pcmk()
-    log_debug("get replication configuration from "
-              "the template file {}", recovery_tpl)
-    # Create the recovery.conf file to start the instance as a standby.
-    # NOTE: the recovery.conf is supposed to be set up so the standby can
-    # connect to the master instance, usually using a virtual IP address.
-    # As there is no master instance available at startup, secondaries will
-    # complain about failing to connect.
-    # As we can not reload a recovery.conf file on a standby without restarting
-    # it, we will leave with this.
-    # FIXME how would the reload help us in this case ?
+    log_debug("get replication configuration from template {}", recovery_tpl)
+    # primary_conninfo often has a virtual IP to reach the master. There is no
+    # master available at startup, so standbies will complain about failing to
+    # connect. This is normal.
     try:
         with open(recovery_tpl) as fh:
             # Copy all parameters from the template file
@@ -793,130 +787,43 @@ def confirm_this_node_should_be_promoted():
     return True
 
 
-def is_switchover(nodes, n):
-    """ Check if th current transition is a switchover to the given node """
-    old = None
-    if nodes["master"]:
-        old = nodes["master"][0]
-    if (len(nodes["master"]) != 1 or
-            len(nodes["demote"]) != 1 or len(nodes["promote"]) != 1):
-        return False
-    t1 = old in nodes["demote"]
-    t4 = old in nodes["stop"]
-    t2 = n in nodes["slave"]
-    t3 = n in nodes["promote"]
-    return t1 and t2 and t3 and not t4
-
-
-def check_switchover(nodes):
-    """ Check if the pgsql switchover to the localnode is safe. Should be called
-    after the master has been stopped or demoted. Check if the local standby
-    received the shutdown checkpoint from the old master to make sure it can
-    take over the master role and the old master will be able to catchup as a
-    standby after.
-    Return 0 if switchover is safe
-           1 if swithcover is not safe
-           2 for internal error """
-    log_info("switch from {} to {} in progress, checking last record in WAL",
-             nodes["demote"][0], get_ocf_nodename())
-    # Force a checpoint to make sure the controldata shows the very last TL
-    pg_execute("CHECKPOINT")
-    # check if we received the shutdown checkpoint of the master during its
-    # demote process.
-    # We need the last local checkpoint LSN and the last received LSN from
-    # master to check in the WAL between these adresses if we have a
-    # "checkpoint shutdown" using pg_xlogdump.
-    datadir = get_pgdata()
-    ans = run_pgctrldata()
-    # Get the latest known TL
-    p = re.compile(r"^Latest checkpoint's TimeLineID:\s+(\d+)\s*$", re.M)
-    m = p.findall(ans)
-    tl = m[0] if m else None
-    # Get the latest local checkpoint
-    p = re.compile(
-        r"^Latest checkpoint's REDO location:\s+([0-9A-F/]+)\s*$", re.M)
-    m = p.findall(ans)
-    last_chk = m[0] if m else None
-    # Get the last received LSN from master
-    #  0/4000000
-    rc, rs = pg_execute("SELECT pg_last_xlog_replay_location()")
-    if rc != 0:
-        log_err("could not query last_xlog_receive_location ({})", rc)
-        return 2
-    last_lsn = rs[0][0] if rs and rs[0] else None
-    if not (tl and last_chk and last_lsn):
-        log_crit("couldn't read last checkpoint or timeline from controldata")
-        log_debug("XLOGDUMP parameters:  datadir: {}, last_chk: {}, tl: {}, "
-                  "mast_lsn: {}", datadir, last_chk, tl, last_lsn)
-        return 2
-    # force checkpoint on the standby to flush the master's
-    # shutdown checkpoint to WAL
-    rc = 0
-    try:
-        ans = check_output([
-            os.path.join(get_pgbindir(), "pg_xlogdump"), "-p", datadir,
-            "-t", tl, "-s", last_chk, "-e", last_lsn], stderr=STDOUT)
-    except CalledProcessError as e:
-        rc = e.returncode
-        ans = e.output
-    log_debug("XLOGDUMP rc: {}, tl: {}, last_chk: {}, last_lsn: {}, "
-              "output: [{}]", rc, tl, last_chk, last_lsn, ans)
-    p = re.compile(
-        r"^rmgr: XLOG.*desc: [cC][hH][eE][cC][kK][pP][oO][iI][nN][tT]"
-        r"(:|_SHUTDOWN) redo [0-9A-F/]+; tli " + tl + r";.*; shutdown$",
-        re.M | re.DOTALL)
-    if rc == 0 and p.search(ans):
-        log_info("standby received shutdown checkpoint", get_pgctrldata_state())
-        return 0
-    set_ha_private_attr("cancel_promotion", "1")
-    log_info("did not received shutdown checkpoint from old master")
-    return 1
+def del_private_attributes():
+    del_ha_private_attr("lsn_location")
+    del_ha_private_attr("master_promotion")
+    del_ha_private_attr("nodes")
+    del_ha_private_attr("cancel_promotion")
 
 
 def notify_pre_promote(nodes):
     node = get_ocf_nodename()
     promoting = nodes["promote"][0]
     log_info("{} will be promoted", promoting)
+
     # No need to do an election between slaves if this is recovery of the master
     if promoting in nodes["master"]:
         log_warn("this is a master recovery")
         if promoting == node:
             set_ha_private_attr("master_promotion", "1")
         return OCF_SUCCESS
-    # Environment cleanup!
-    del_ha_private_attr("lsn_location")
-    del_ha_private_attr("master_promotion")
-    del_ha_private_attr("nodes")
-    del_ha_private_attr("cancel_promotion")
-    # check for the last received entry of WAL from the master if we are
-    # the designated standby to promote
-    if is_switchover(nodes, node) and node in nodes["promote"]:
-        rc = check_switchover(nodes)
-        if rc == 1:
-            # Shortcut the election process because the switchover will be
-            # canceled
-            return OCF_SUCCESS
-        elif rc != 0:
-            # This is an extreme mesure, it shouldn't happen.
-            call([os.path.join(get_ha_bin(), "crm_failcount"),
-                  "-r", get_rcs_inst(), "-v", "1000000"])
-            return OCF_ERR_INSTALLED
-            # If the sub keeps going, that means the switchover is safe.
-            # Keep going with the election process in case the switchover was
-            # instruct to the wrong node.
-            # FIXME: should we allow a switchover to a lagging standby?
+
+    del_private_attributes()
+
+    # If the sub keeps going, that means the switchover is safe.
+    # Keep going with the election process in case the switchover was
+    # instruct to the wrong node.
+    # FIXME: should we allow a switchover to a lagging standby?
+
     # We need to trigger an election between existing slaves to promote the best
     # one based on its current LSN location. The designated standby for
     # promotion is responsible to connect to each available nodes to check their
     # "lsn_location".
-    # During the following promote action, ocf_promote will use this
-    # information to check if the instance to be promoted is the best one,
-    # so we can avoid a race condition between the last successful monitor
-    # on the previous master and the current promotion.
+    # ocf_promote will use this information to check if the instance to promote
+    # is the best one, so we can avoid a race condition between the last
+    # successful monitor on the previous master and the current promotion.
     rc, rs = pg_execute("SELECT pg_last_xlog_replay_location()")
     if rc != 0:
         log_warn("pre_promote: could not query the current node LSN")
-        # Return code are ignored during notifications...
+        # Return codes are ignored during notifications...
         return OCF_SUCCESS
     node_lsn = rs[0][0]
     log_info("pre_promote: current node LSN: {}", node_lsn)
@@ -924,9 +831,8 @@ def notify_pre_promote(nodes):
     # during the following "promote" action.
     if not set_ha_private_attr("lsn_location", node_lsn):
         log_warn("pre_promote: could not set the current node LSN")
-    # If this node is the future master, keep track of the slaves that
-    # received the same notification to compare our LSN with them during
-    # promotion
+    # If this node is the future master, keep track of the slaves that received
+    # the same notification to compare our LSN with them during promotion
     active_nodes = defaultdict(int)
     if promoting == node:
         # build the list of active nodes:
@@ -940,23 +846,14 @@ def notify_pre_promote(nodes):
     return OCF_SUCCESS
 
 
-def notify_post_promote():
-    del_ha_private_attr("lsn_location")
-    del_ha_private_attr("master_promotion")
-    del_ha_private_attr("nodes")
-    del_ha_private_attr("cancel_promotion")
-    return OCF_SUCCESS
-
-
 def notify_pre_demote(nodes):
     # do nothing if the local node will not be demoted
-    this_node = get_ocf_nodename()
-    if this_node not in nodes["demote"]:
+    node = get_ocf_nodename()
+    if node not in nodes["demote"]:
         return OCF_SUCCESS
     rc = get_ocf_state()
     # do nothing if this is not a master recovery
-    master_recovery = (this_node in nodes["master"] and
-                       this_node in nodes["promote"])
+    master_recovery = node in nodes["master"] and node in nodes["promote"]
     if not master_recovery or rc != OCF_FAILED_MASTER:
         return OCF_SUCCESS
     # in case of master crash, we need to detect if the CRM tries to recover
@@ -994,15 +891,14 @@ def notify_pre_start(nodes):
 
 
 def notify_pre_stop(nodes):
-    this_node = get_ocf_nodename()
+    node = get_ocf_nodename()
     # do nothing if the local node will not be stopped
-    if this_node not in nodes["stop"]:
+    if node not in nodes["stop"]:
         return OCF_SUCCESS
     inst = get_rcs_inst()
     rc = get_non_transitional_pg_state(inst)
     # do nothing if this is not a standby recovery
-    standby_recovery = (this_node in nodes["slave"] and
-                        this_node in nodes["start"])
+    standby_recovery = node in nodes["slave"] and node in nodes["start"]
     if not standby_recovery or rc != OCF_SUCCESS:
         return OCF_SUCCESS
     # in case of standby crash, we need to detect if the CRM tries to recover
@@ -1061,13 +957,20 @@ def ocf_validate_all():
     except:
         log_crit("Could not open or read file {}".format(recovery_tpl))
         sys.exit(OCF_ERR_ARGS)
-    if not re.search(RE_STANDBY_MODE, content, re.M):
-        log_crit(
-            "Recovery template file {} must contain 'standby_mode = on'",
-            recovery_tpl)
+    if not re.search(RE_TPL_STANDBY_MODE, content, re.M):
+        log_crit("standby_mode not 'on' in {}", recovery_tpl)
         sys.exit(OCF_ERR_ARGS)
     if not re.search(RE_TPL_TIMELINE, content, re.M):
-        log_crit("Recovery template lacks 'recovery_target_timeline = latest'")
+        log_crit("recovery_target_timeline not 'latest' in {}", recovery_tpl)
+        sys.exit(OCF_ERR_ARGS)
+    finds = re.findall(RE_TPL_SLOT, content, re.M)
+    if not finds:
+        log_crit("primary_slot_name missing from {}", recovery_tpl)
+        sys.exit(OCF_ERR_ARGS)
+    expected_slot_name = get_ocf_nodename().replace("-", "_")
+    if not finds[0] == expected_slot_name:
+        log_crit("unexpected primary_slot_name in {}; expected {}, found {}",
+                 recovery_tpl, expected_slot_name, finds[0])
         sys.exit(OCF_ERR_ARGS)
     try:
         pwd.getpwnam(get_pguser())
@@ -1075,13 +978,14 @@ def ocf_validate_all():
         log_crit("System user {} does not exist", get_pguser())
         sys.exit(OCF_ERR_ARGS)
     # require wal_level >= hot_standby
-    finds = re.findall(RE_WAL_LEVEL, run_pgctrldata(), re.M)
-    if not finds:
-        log_crit("Could not read wal_level setting")
-        sys.exit(OCF_ERR_ARGS)
-    if finds[0] not in ("hot_standby", "logical", "replica"):
-        log_crit("wal_level must be hot_standby, logical or replica")
-        sys.exit(OCF_ERR_ARGS)
+    # rc, rs = pg_execute("SHOW wal_level")
+    # if rc != 0:
+    #     log_crit("Could not get wal_level setting")
+    #     sys.exit(OCF_ERR_ARGS)
+    # if rs[0][0] not in ("logical", "replica"):
+    #     log_crit("wal_level must be replica, or higher (logical); "
+    #              "currently set to {}", rs[0][0])
+    #     sys.exit(OCF_ERR_ARGS)
     return OCF_SUCCESS
 
 
@@ -1348,7 +1252,8 @@ def ocf_notify():
     if type_op == "pre-promote":
         return notify_pre_promote(d["nodes"])
     if type_op == "post-promote":
-        return notify_post_promote()
+        del_private_attributes()
+        return OCF_SUCCESS
     if type_op == "pre-demote":
         return notify_pre_demote(d["nodes"])
     if type_op == "pre-stop":

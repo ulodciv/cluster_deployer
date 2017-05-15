@@ -159,7 +159,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
     def pg_make_master(self, all_hosts):
         self.pg_set_param("wal_level", "replica")
         self.pg_set_param("max_wal_senders", len(all_hosts) + 5)
-        self.pg_set_param("max_replication_slots", len(all_hosts))
+        self.pg_set_param("max_replication_slots", len(all_hosts) + 5)
         self.pg_set_param("listen_addresses", "'*'")
         self.pg_set_param("hot_standby", "on")
         self.pg_set_param("hot_standby_feedback", "on")

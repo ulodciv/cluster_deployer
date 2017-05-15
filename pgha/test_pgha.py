@@ -45,7 +45,8 @@ TPL = """\
 standby_mode = on
 recovery_target_timeline = latest
 primary_conninfo = 'host=/var/run/postgresql port={} user={}'
-""".format(PGPORT_MASTER, PGUSER)
+primary_slot_name = '{}'
+""".format(PGPORT_MASTER, PGUSER, RA.get_ocf_nodename().replace("-", "_"))
 CONF_ADDITIONS = """
 listen_addresses = '*'
 port = {}
@@ -53,8 +54,7 @@ wal_level = replica
 max_wal_senders = 5
 hot_standby = on
 hot_standby_feedback = on
-max_replication_slots = 10 
-wal_receiver_status_interval = 20s
+max_replication_slots = 10
 """
 HBA_ADDITIONS = "\nlocal replication all trust\n"
 
@@ -277,7 +277,7 @@ primary_conninfo = 'port={}'
         self.assertTrue(RA.add_replication_slots(["node1", UNAME, "node2"]))
         rc, rs = RA.pg_execute("SELECT slot_name FROM pg_replication_slots")
         self.assertEqual(0, rc)
-        self.assertEqual([["node1_slot"], ["node2_slot"]], rs)
+        self.assertEqual([["node1"], ["node2"]], rs)
         RA.del_ha_private_attr("nodes")
         self.assertTrue(RA.delete_replication_slots())
         rc, rs = RA.pg_execute("SELECT slot_name FROM pg_replication_slots")
@@ -341,6 +341,7 @@ class TestRegExes(unittest.TestCase):
     TPL = """\
 primary_conninfo = 'user={} host=127.0.0.1 port=15432'
 recovery_target_timeline = 'latest'
+primary_slot_name = 'foo'
 """.format(PGUSER)
     cluster_state = """\
 Catalog version number:               201608131
@@ -352,6 +353,10 @@ pg_control last modified:             Fri 31 Mar 2017 10:01:29 PM CEST
     def test_tpl_file(self):
         m = re.search(RA.RE_TPL_TIMELINE, TestRegExes.TPL, re.M)
         self.assertIsNotNone(m)
+
+    def test_tpl_slot(self):
+        finds = re.findall(RA.RE_TPL_SLOT, TestRegExes.TPL, re.M)
+        self.assertAlmostEqual(finds[0], "foo")
 
     def test_pg_cluster_state(self):
         m = re.findall(RA.RE_PG_CLUSTER_STATE, TestRegExes.cluster_state, re.M)

@@ -11,58 +11,6 @@ from cluster import Cluster
 DB = "demo_db"
 
 
-class ClusterContext:
-    with open("config/tests.json") as fh:
-        cluster_json = json.load(fh)
-
-    def __init__(self):
-        self.cluster = Cluster(None, self.cluster_json)
-        self.cluster.deploy()
-        sleep(40)
-        # return
-        self.cluster.ha_standby_all()
-        sleep(10)  # let vms settle a bit before taking snapshots
-        for vm in self.cluster.vms:
-            vm.vm_pause()
-        for vm in self.cluster.vms:
-            vm.vm_take_snapshot("snapshot1")
-
-    def setup(self):
-        # return
-        for vm in self.cluster.vms:
-            try:
-                vm.vm_poweroff()
-            except:
-                pass  # machine is already powered off
-        for vm in self.cluster.vms:
-            vm.vm_restore_snapshot("snapshot1")
-        sleep(5)
-        for vm in self.cluster.vms:
-            vm.vm_start()
-        sleep(2)
-        for vm in self.cluster.vms:
-            vm.wait_until_port_is_open(22, 10)
-        self.cluster.ha_unstandby_all()
-        sleep(35)
-
-
-@pytest.fixture(scope="session")
-def cluster_context():
-    context = ClusterContext()
-    yield context
-    # return
-    for vm in context.cluster.vms:
-        try:
-            print(vm.vm_poweroff())
-        except Exception as e:
-            print(f"exception during power off:\n{e}")
-        sleep(2)  # seems like this is necessary...
-        try:
-            print(vm.vm_delete())
-        except Exception as e:
-            print(f"exception during delete:\n{e}")
-
-
 def expect_query_results(query_func, expected_results, timeout):
     start_time = time()
     while True:
@@ -104,6 +52,60 @@ def expect_master_node(cluster, expected_master, timeout):
         if time() - start_time > timeout:
             return False
         sleep(1)
+
+
+class ClusterContext:
+    with open("config/tests.json") as fh:
+        cluster_json = json.load(fh)
+
+    def __init__(self):
+        self.cluster = Cluster(None, self.cluster_json)
+        self.cluster.deploy()
+        sleep(40)
+        # return
+        self.cluster.ha_standby_all()
+        sleep(10)  # let vms settle a bit before taking snapshots
+        for vm in self.cluster.vms:
+            vm.vm_pause()
+        for vm in self.cluster.vms:
+            vm.vm_take_snapshot("snapshot1")
+
+    def setup(self):
+        # return
+        cluster = self.cluster
+        for vm in cluster.vms:
+            try:
+                vm.vm_poweroff()
+            except:
+                pass  # machine is already powered off
+        for vm in cluster.vms:
+            vm.vm_restore_snapshot("snapshot1")
+        sleep(5)
+        for vm in cluster.vms:
+            vm.vm_start()
+        sleep(2)
+        for vm in cluster.vms:
+            vm.wait_until_port_is_open(22, 10)
+        cluster.ha_unstandby_all()
+        expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
+        expect_master_node(cluster, cluster.master.name, 25)
+
+
+@pytest.fixture(scope="session")
+def cluster_context():
+    context = ClusterContext()
+    yield context
+    # return
+    for vm in context.cluster.vms:
+        try:
+            print(vm.vm_poweroff())
+        except Exception as e:
+            print(f"exception during power off:\n{e}")
+        sleep(2)  # seems like this is necessary...
+        try:
+            print(vm.vm_delete())
+        except Exception as e:
+            print(f"exception during delete:\n{e}")
 
 
 def test_simple_replication1(cluster_context):
@@ -201,6 +203,10 @@ def test_kill_master(cluster_context):
     cluster = cluster_context.cluster
     master = cluster.master
 
+    if len(cluster.vms) < 3:
+        print("This test requires more than two nodes")
+        return
+
     def run_updates_until_error():
         try:
             for i in range(10000):
@@ -245,8 +251,9 @@ def test_kill_master(cluster_context):
     sleep(5)  # HACK: this should not be necessary
     assert expect_online_nodes(
         cluster, {vm.name for vm in standbies}, 25)
-    sleep(10)
-    new_master.ssh_run_check(f"crm_resource --cleanup")  # HACK
+    # sleep(10)
+    new_master.ssh_run_check(
+        f"crm_master -v 10000 -N {remaining_standbies[0].name} -r pgsqld")
     assert expect_master_node(cluster, new_master.name, 25)
     # killed_master.vm_start()
     # sleep(20)
