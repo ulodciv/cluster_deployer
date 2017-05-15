@@ -142,7 +142,7 @@ class Linux(VmBase, metaclass=ABCMeta):
         while True:
             try:
                 self.log(f"checking if {self.ip}:{port} is listening")
-                socket.create_connection((self.ip, port), 2)
+                s = socket.create_connection((self.ip, port), 2)
             except (socket.timeout, OSError):
                 self.log(f"{self.ip}:{port} is not listening")
                 if time() - start_time > timeout:
@@ -151,6 +151,10 @@ class Linux(VmBase, metaclass=ABCMeta):
                     return False
                 sleep(0.1)
                 continue
+            try:
+                s.close()
+            except:
+                pass
             self.log(f"{self.ip}:{port} is listening")
             return True
 

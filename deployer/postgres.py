@@ -153,7 +153,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
 
     def pg_create_replication_user(self):
         self.ssh_run_check(
-            f'createuser {self.pg_repl_user} -c 5 --replication',
+            f'createuser {self.pg_repl_user} --replication',
             user=self.pg_user)
 
     def pg_make_master(self, all_hosts):
