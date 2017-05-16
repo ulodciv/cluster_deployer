@@ -1,6 +1,7 @@
 {
   "ova": "/mnt/c/dev/centos7_6.ova",
   "cluster_name": "PgCluster",
+  "ha_pg_resource": "pg",
   "virtual_ip": "192.168.72.251",
   "users": [
     "root",

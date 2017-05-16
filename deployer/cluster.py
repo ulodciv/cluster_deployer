@@ -55,6 +55,7 @@ class Cluster:
         self.virtual_ip = cluster_def["virtual_ip"]
         self.demo_db = cluster_def["demo_db"]
         self.pg_ra = cluster_def["pg_ra"]
+        self.ha_pg_resource = cluster_def["ha_pg_resource"]
         common = {k: v for k, v in cluster_def.items() if k != "hosts"}
         if vboxmanage:
             common["vboxmanage"] = vboxmanage
@@ -267,7 +268,7 @@ class Cluster:
     def ha_add_pg_to_xml(self):
         master = self.master
         self._pcs_xml(
-            f"resource create pgsqld ocf:heartbeat:pgha "
+            f"resource create {self.ha_pg_resource} ocf:heartbeat:pgha "
             f"pgbindir={master.pg_bindir} "
             f"pgdata={master.pg_data_directory} "
             f"pgconf={master.pg_config_file} "
@@ -279,7 +280,7 @@ class Cluster:
             f"op monitor interval=16s timeout=10s role=\"Slave\" "
             f"op notify timeout=60s")
         self._pcs_xml(
-            f"resource master pgsql-ha pgsqld clone-max=10 notify=true")
+            f"resource master pgsql-ha {self.ha_pg_resource} clone-max=10 notify=true")
 
     def ha_add_pg_vip_to_xml(self):
         ipv4 = self.ha_get_vip_ipv4()

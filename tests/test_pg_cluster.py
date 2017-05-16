@@ -210,7 +210,8 @@ def test_trigger_switchover(cluster_context):
     cluster = cluster_context.cluster
     sleep(5)
     cluster.master.ssh_run_check(
-        f"crm_master -v 10000 -N {cluster.standbies[0].name} -r pgsqld")
+        f"crm_master -v 10000 -N {cluster.standbies[0].name} "
+        f"-r {cluster.ha_pg_resource}")
     cluster.master = cluster.standbies[0]
     assert expect_master_node(cluster, cluster.master.name, 25)
     cluster.master.pg_execute(
@@ -286,7 +287,8 @@ def test_kill_master(cluster_context):
     assert expect_online_nodes(
         cluster, {vm.name for vm in standbies}, 25)
     new_master.ssh_run_check(
-        f"crm_master -v 10000 -N {remaining_standbies[0].name} -r pgsqld")
+        f"crm_master -v 10000 -N {remaining_standbies[0].name} "
+        f"-r {cluster.ha_pg_resource}")
     assert expect_master_node(cluster, new_master.name, 25)
     # killed_master.vm_start()
     # sleep(20)
