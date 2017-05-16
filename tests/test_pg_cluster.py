@@ -54,20 +54,36 @@ def expect_master_node(cluster, expected_master, timeout):
         sleep(1)
 
 
+def expect_node_in_recovery_or_not(expect_in_recovery, node, timeout):
+    start_time = time()
+    while True:
+        in_recovery = node.pg_execute("SELECT pg_is_in_recovery()") == [['t']]
+        if in_recovery == expect_in_recovery:
+            print(f"got expected in_recovery: {in_recovery}")
+            return True
+        print(f"did not get expected in_recovery, "
+              f"expected: {expect_in_recovery}, got {in_recovery}")
+        if time() - start_time > timeout:
+            return False
+        sleep(1)
+
+
 class ClusterContext:
     with open("config/tests.json") as fh:
         cluster_json = json.load(fh)
 
     def __init__(self):
         self.cluster = Cluster(None, self.cluster_json)
-        self.cluster.deploy()
-        sleep(40)
+        cluster = self.cluster
+        cluster.deploy()
+        sleep(10)
+        expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
         # return
-        self.cluster.ha_standby_all()
+        cluster.ha_standby_all()
         sleep(10)  # let vms settle a bit before taking snapshots
-        for vm in self.cluster.vms:
+        for vm in cluster.vms:
             vm.vm_pause()
-        for vm in self.cluster.vms:
+        for vm in cluster.vms:
             vm.vm_take_snapshot("snapshot1")
 
     def setup(self):
@@ -120,7 +136,7 @@ def test_simple_replication1(cluster_context):
     assert 'test12' == rs[0][0]
     for standby in cluster.standbies:
         assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['test12']], 2)
+            partial(standby.pg_execute, select_sql, db=DB), [['test12']], 4)
     master.pg_execute("update person.addresstype set name='foo' "
                       "where addresstypeid=1", db=DB)
     for standby in cluster.standbies:
@@ -187,13 +203,29 @@ def test_kill_standby(cluster_context):
         partial(killed_standby.pg_execute, select_sql, db=DB), [['a']], 10)
 
 
+def test_trigger_switchover(cluster_context):
+    cluster_context.setup()
+    cluster = cluster_context.cluster
+    sleep(5)
+    cluster.master.ssh_run_check(
+        f"crm_master -v 10000 -N {cluster.standbies[0].name} -r pgsqld")
+    cluster.master = cluster.standbies[0]
+    assert expect_master_node(cluster, cluster.master.name, 25)
+    cluster.master.pg_execute(
+        "update person.addresstype set name='c' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in cluster.standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['c']], 20)
+
+
 def test_kill_master(cluster_context):
     """
     Action: poweroff standbies while running updates on master
     Action: poweroff master
     Action: poweron standbies
     Action: pcs cluster start standby1, standby2
-    Check: a standby became Master, the last one most up to date
+    Check: the most up to date standby became Master
     TODO:
     Action: poweron Master
     Action: pcs cluster start <previous master>
@@ -235,7 +267,7 @@ def test_kill_master(cluster_context):
 
     for standby in cluster.standbies:
         standby.vm_start()
-    sleep(20)
+    sleep(15)
     for standby in cluster.standbies:
         standby.wait_until_port_is_open(22, 30)
 
@@ -251,7 +283,6 @@ def test_kill_master(cluster_context):
     sleep(5)  # HACK: this should not be necessary
     assert expect_online_nodes(
         cluster, {vm.name for vm in standbies}, 25)
-    # sleep(10)
     new_master.ssh_run_check(
         f"crm_master -v 10000 -N {remaining_standbies[0].name} -r pgsqld")
     assert expect_master_node(cluster, new_master.name, 25)

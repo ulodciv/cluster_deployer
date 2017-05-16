@@ -406,7 +406,7 @@ def set_standbies_scores():
 
 
 def is_master_or_standby(inst):
-    """ Confirm if the instance is really started as pgisready stated and
+    """ Confirm if the instance is really started as pg_isready stated and
     if the instance is master or standby
     Return OCF_SUCCESS or OCF_RUNNING_MASTER or OCF_ERR_GENERIC or
     OCF_ERR_CONFIGURED """
@@ -483,13 +483,13 @@ def pg_ctl_status():
 
 
 def pg_ctl_start():
-    # insanely long timeout to ensure Pacemaker gives up first
-    cmd = [get_pgctl(), "start", "-D", get_pgdata(), "-w", "-t", 1000000,
-           "-o", "-c config_file=" + get_pgconf()]
-    return as_postgres(cmd)
+    # long timeout to ensure Pacemaker gives up first
+    return as_postgres([get_pgctl(), "start", "-D", get_pgdata(), "-w",
+                        "-t", 1000000, "-o", "-c config_file=" + get_pgconf()])
 
 
 def pg_ctl_stop():
+    # long timeout to ensure Pacemaker gives up first
     return as_postgres([get_pgctl(), "stop", "-D", get_pgdata(),
                         "-w", "-t", 1000000, "-m", "fast"])
 
@@ -651,8 +651,7 @@ def ocf_promote():
         # Promote the instance on the current node.
         log_err("'pg_ctl promote' failed")
         return OCF_ERR_GENERIC
-    # promote is asynchronous: wait for it
-    # to finish (at least until the next version)
+    # promote is asynchronous: wait for it to finish, at least with PG 9.6
     while is_master_or_standby(inst) != OCF_RUNNING_MASTER:
         log_debug("waiting for promote to complete")
         sleep(1)
@@ -680,6 +679,15 @@ def add_replication_slots(slave_nodes):
     return True
 
 
+def kill_wal_sender(slot):
+    rc, rs = pg_execute(
+        "SELECT pg_terminate_backend(active_pid) "
+        "FROM pg_replication_slots "
+        "WHERE slot_name='{}' AND active_pid IS NOT NULL".format(slot))
+    if rs:
+        log_info("killed active wal sender for slot {}".format(slot))
+
+
 def kill_wal_senders(slave_nodes):
     nodename = get_ocf_nodename()
     rc, rs = pg_execute("SELECT slot_name "
@@ -690,14 +698,8 @@ def kill_wal_senders(slave_nodes):
         if node == nodename:
             continue  # TODO: is this check necessary?
         slot = node.replace('-', '_')
-        if slot not in slots:
-            continue
-        rc, rs = pg_execute(
-            "SELECT pg_terminate_backend(active_pid) "
-            "FROM pg_replication_slots "
-            "WHERE slot_name='{}' AND active_pid IS NOT NULL".format(slot))
-        if rs:
-            log_info("killed active wal sender for slot {}".format(slot))
+        if slot in slots:
+            kill_wal_sender(slot)
 
 
 def delete_replication_slots():
@@ -706,6 +708,7 @@ def delete_replication_slots():
         log_debug("no replication slots to delete")
         return True
     for slot in [r[0] for r in rs]:
+        kill_wal_sender(slot)
         q = "SELECT * FROM pg_drop_replication_slot('{}')".format(slot)
         rc, rs = pg_execute(q)
         if rc != 0:

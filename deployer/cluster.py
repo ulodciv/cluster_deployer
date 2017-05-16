@@ -273,7 +273,7 @@ class Cluster:
             f"pgconf={master.pg_config_file} "
             f"op start timeout=60s "
             f"op stop timeout=60s "
-            f"op promote timeout=30s "
+            f"op promote timeout=120s "
             f"op demote timeout=120s "
             f"op monitor interval=15s timeout=10s role=\"Master\" "
             f"op monitor interval=16s timeout=10s role=\"Slave\" "
