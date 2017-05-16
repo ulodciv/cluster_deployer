@@ -97,6 +97,7 @@ class ClusterContext:
         for vm in cluster.vms:
             vm.vm_restore_snapshot("snapshot1")
         sleep(5)
+        cluster.master = cluster.vms[0]
         for vm in cluster.vms:
             vm.vm_start()
         sleep(2)
@@ -186,6 +187,7 @@ def test_kill_standby(cluster_context):
     for standby in other_standbies:
         remaining_nodes.add(standby.name)
     assert expect_online_nodes(cluster, remaining_nodes, 20)
+    assert expect_master_node(cluster, master.name, 20)
     master.pg_execute(
         "update person.addresstype set name='a' where addresstypeid=1", db=DB)
     select_sql = "select name from person.addresstype where addresstypeid=1"
