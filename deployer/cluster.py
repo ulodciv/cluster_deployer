@@ -24,7 +24,7 @@ class Cluster:
 
     @staticmethod
     def configure_logging():
-        logging.basicConfig(format='%(relativeCreated)d %(name)s: %(message)s')
+        logging.basicConfig(format='%(asctime)s %(name)s: %(message)s')
         logging.getLogger().setLevel(logging.DEBUG)
         logging.getLogger("paramiko").setLevel(logging.WARNING)
 

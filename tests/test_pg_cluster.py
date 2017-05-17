@@ -112,7 +112,7 @@ class ClusterContext:
 def cluster_context():
     context = ClusterContext()
     yield context
-    # return
+    return
     for vm in context.cluster.vms:
         try:
             print(vm.vm_poweroff())
@@ -137,12 +137,12 @@ def test_simple_replication1(cluster_context):
     assert 'test12' == rs[0][0]
     for standby in cluster.standbies:
         assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['test12']], 4)
+            partial(standby.pg_execute, select_sql, db=DB), [['test12']], 6)
     master.pg_execute("update person.addresstype set name='foo' "
                       "where addresstypeid=1", db=DB)
     for standby in cluster.standbies:
         assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['foo']], 2)
+            partial(standby.pg_execute, select_sql, db=DB), [['foo']], 6)
 
 
 def test_pcs_standby(cluster_context):
@@ -161,7 +161,7 @@ def test_pcs_standby(cluster_context):
     assert standby.pg_execute("select 1") == [['1']]
     select_sql = "select name from person.addresstype where addresstypeid=1"
     assert expect_query_results(
-        partial(standby.pg_execute, select_sql, db=DB), [['test12']], 5)
+        partial(standby.pg_execute, select_sql, db=DB), [['test12']], 6)
 
 
 def test_kill_standby(cluster_context):
@@ -241,6 +241,8 @@ def test_kill_master(cluster_context):
     if len(cluster.vms) < 3:
         print("This test requires more than two nodes")
         return
+
+    sleep(5)  # WAL receiver timeout
 
     def run_updates_until_error():
         try:

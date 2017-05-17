@@ -720,77 +720,54 @@ def delete_replication_slots():
 def confirm_this_node_should_be_promoted():
     """ Find out if this node is truly the one to promote. If not, also update
     the scores.
-    Return True if this node has the highest lsn_location, False otherwise """
-    # The standby with the highest master score gets promoted, as set during the
-    # last monitor on the previous master (see set_standbies_scores).
-    # Here we confirm that these scores are still correct in that this node still
-    # has the most advance WAL record.
-    # All slaves should all have set set the "lsn_location" resource attribute
-    # during pre-promote.
+    The standby with the highest master score gets promoted, as set during the
+    last monitor on the previous master (see set_standbies_scores). Confirm
+    that these scores are still correct in that this node still has the most
+    advance WAL record. All slaves should all have set the "replay_location"
+    resource attribute during pre-promote.
+    Return True if this node has the highest replay_location LSN, False
+    otherwise """
     log_debug("checking if current node is the best for promotion")
     # Exclude nodes that are known to be unavailable (not in the current
     # partition) using the "crm_node" command
     active_nodes = get_ha_private_attr("nodes").split()
-    node_to_promote = ""
-    # Get the lsn_location attribute value of the current node, as set
-    # during the "pre-promote" action.
-    # It should be the greatest among the standby instances.
-    max_lsn = get_ha_private_attr("lsn_location")
-    if max_lsn == "":
-        # Should not happen since the "lsn_location" attribute should have
-        # been updated during pre-promote.
-        log_crit("can not get current node LSN location")
+    local_node = get_ocf_nodename()
+    node_to_promote = local_node
+    local_lsn = get_ha_private_attr("replay_location")  # set during pre-promote
+    if local_lsn == "":
+        log_crit("no replay location LSN for this node")
         return False
-    # convert location to decimal
-    max_lsn = max_lsn.strip("\n")
-    wal_num, wal_off = max_lsn.split("/")
-    max_lsn_dec = (294967296 * int(wal_num, 16)) + int(wal_off, 16)
-    log_debug("current node lsn location: {}({})", max_lsn, max_lsn_dec)
+    # convert LSN to a pair of integers
+    local_lsn = [int(v, 16) for v in local_lsn.split("/")]
+    highest_lsn = local_lsn
+    log_debug("replay location LSN for this node: {}", local_lsn)
     # Now we compare with the other available nodes.
-    nodename = get_ocf_nodename()
-    for node in active_nodes:
-        # We exclude the current node from the check.
-        if node == nodename:
-            continue
-        # Get the "lsn_location" attribute value for the node, as set during
-        # the "pre-promote" action.
-        node_lsn = get_ha_private_attr("lsn_location", node)
+    for node in (n for n in active_nodes if n != local_node):
+        node_lsn = get_ha_private_attr("replay_location", node)  # set during pre-promote
         if node_lsn == "":
-            # This should not happen as the "lsn_location" attribute should
-            # have been updated during the "pre-promote" action.
-            log_crit("can't get LSN location of {}", node)
+            log_crit("no replay location LSN for {}", node)
             return False
         # convert location to decimal
-        node_lsn = node_lsn.strip("\n")
-        wal_num, wal_off = node_lsn.split("/")
-        node_lsn_dec = (4294967296 * int(wal_num, 16)) + int(wal_off, 16)
-        log_debug("comparing with {}: lsn is {}({})",
-                  node, node_lsn, node_lsn_dec)
-        # If the node has a bigger delta, select it as a best candidate to
-        # promotion.
-        if node_lsn_dec > max_lsn_dec:
+        node_lsn = [int(v, 16) for v in node_lsn.split("/")]
+        log_debug("replay location LSN for {}: {}", node, node_lsn)
+        if node_lsn > highest_lsn:
             node_to_promote = node
-            max_lsn_dec = node_lsn_dec
-            # max_lsn = node_lsn
-            log_debug("found {} as a better candidate to promote", node)
+            highest_lsn = node_lsn
+            log_debug("{}'s replay location is higher", node)
     # If any node has been selected, we adapt the master scores accordingly
     # and break the current promotion.
-    if node_to_promote != "":
-        log_info("{} is the best candidate to promote, "
-                 "aborting current promotion", node_to_promote)
-        # Reset current node master score.
-        set_promotion_score("1")
-        # Set promotion candidate master score.
+    if node_to_promote != local_node:
+        log_info("{} is the best standby to promote, aborting promotion",
+                 node_to_promote)
+        set_promotion_score("1")  # minimize local node's score
         set_promotion_score("1000", node_to_promote)
-        # Make the promotion fail to trigger another promotion transition
-        # with the new scores.
+        # Make promotion fail; another one will occur with updated scores
         return False
-    # keep on promoting the current node.
     return True
 
 
 def del_private_attributes():
-    del_ha_private_attr("lsn_location")
+    del_ha_private_attr("replay_location")
     del_ha_private_attr("master_promotion")
     del_ha_private_attr("nodes")
     del_ha_private_attr("cancel_promotion")
@@ -818,21 +795,21 @@ def notify_pre_promote(nodes):
     # We need to trigger an election between existing slaves to promote the best
     # one based on its current LSN location. The designated standby for
     # promotion is responsible to connect to each available nodes to check their
-    # "lsn_location".
+    # "replay_location".
     # ocf_promote will use this information to check if the instance to promote
     # is the best one, so we can avoid a race condition between the last
     # successful monitor on the previous master and the current promotion.
     rc, rs = pg_execute("SELECT pg_last_xlog_replay_location()")
     if rc != 0:
-        log_warn("pre_promote: could not query the current node LSN")
+        log_warn("could not get replay location LSN")
         # Return codes are ignored during notifications...
         return OCF_SUCCESS
     node_lsn = rs[0][0]
-    log_info("pre_promote: current node LSN: {}", node_lsn)
-    # Set the "lsn_location" attribute value for this node so we can use it
+    log_info("replay location LSN: {}", node_lsn)
+    # Set the "replay_location" attribute value for this node so we can use it
     # during the following "promote" action.
-    if not set_ha_private_attr("lsn_location", node_lsn):
-        log_warn("pre_promote: could not set the current node LSN")
+    if not set_ha_private_attr("replay_location", node_lsn):
+        log_warn("could not set the replay location LSN")
     # If this node is the future master, keep track of the slaves that received
     # the same notification to compare our LSN with them during promotion
     active_nodes = defaultdict(int)
