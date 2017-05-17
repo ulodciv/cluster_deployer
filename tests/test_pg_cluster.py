@@ -112,7 +112,7 @@ class ClusterContext:
 def cluster_context():
     context = ClusterContext()
     yield context
-    return
+    # return
     for vm in context.cluster.vms:
         try:
             print(vm.vm_poweroff())
