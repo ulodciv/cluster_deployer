@@ -430,7 +430,7 @@ def get_pgctrldata_state():
     if not finds:
         log_crit("couldn't read state from controldata file for {}", datadir)
         sys.exit(OCF_ERR_CONFIGURED)
-    log_debug("state of {} is '{}'", get_rsc_name(), finds[0])
+    log_debug("PG state is '{}'", finds[0])
     return finds[0]
 
 
@@ -832,7 +832,7 @@ def notify_pre_demote(nodes):
     # To avoid this, we try to start the instance in recovery from here.
     # If it success, at least it will be demoted correctly with a normal
     # status. If it fails, it will be catched up in next steps.
-    log_info("trying to start failing master {}", get_rsc_name())
+    log_info("trying to start PG failing master")
     # Either the instance managed to start or it couldn't.
     # We rely on the pg_ctk '-w' switch to take care of this. If it couldn't
     # start, this error will be catched up later during the various checks
