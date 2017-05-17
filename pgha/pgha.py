@@ -178,7 +178,7 @@ def get_logtag():
     global _logtag
     if not _logtag:
         _logtag = "{}:{}({})[{}]".format(
-            PROGRAM, ACTION, get_rsc_name(), os.getpid())
+            PROGRAM, ACTION, os.environ['OCF_RESOURCE_INSTANCE'], os.getpid())
     return _logtag
 
 
