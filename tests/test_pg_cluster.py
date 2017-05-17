@@ -68,6 +68,22 @@ def expect_node_in_recovery_or_not(expect_in_recovery, node, timeout):
         sleep(1)
 
 
+def expect_standby_is_replicating(master, standby_name, timeout):
+    start_time = time()
+    while True:
+        replicating = master.pg_execute(
+            f"SELECT active "
+            f"FROM pg_replication_slots "
+            f"WHERE slot_name='{standby_name}'") == [['t']]
+        if replicating:
+            print(f"{standby_name} is replicating with {master.name}")
+            return True
+        print(f"{standby_name} is not replicating with {master.name}")
+        if time() - start_time > timeout:
+            return False
+        sleep(1)
+
+
 class ClusterContext:
     with open("config/tests.json") as fh:
         cluster_json = json.load(fh)
@@ -96,7 +112,7 @@ class ClusterContext:
                 pass  # machine is already powered off
         for vm in cluster.vms:
             vm.vm_restore_snapshot("snapshot1")
-        sleep(5)
+        sleep(2)
         cluster.master = cluster.vms[0]
         for vm in cluster.vms:
             vm.vm_start()
@@ -104,15 +120,19 @@ class ClusterContext:
         for vm in cluster.vms:
             vm.wait_until_port_is_open(22, 10)
         cluster.ha_unstandby_all()
+        sleep(2)
         expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
         expect_master_node(cluster, cluster.master.name, 25)
+        for standby in cluster.standbies:
+            assert expect_standby_is_replicating(
+                cluster.master, standby.name, 30)
 
 
 @pytest.fixture(scope="session")
 def cluster_context():
     context = ClusterContext()
     yield context
-    # return
+    return
     for vm in context.cluster.vms:
         try:
             print(vm.vm_poweroff())
@@ -125,7 +145,7 @@ def cluster_context():
             print(f"exception during delete:\n{e}")
 
 
-def test_simple_replication1(cluster_context):
+def test_simple_replication1(cluster_context: ClusterContext):
     cluster_context.setup()
     cluster = cluster_context.cluster
     master = cluster.master
@@ -137,21 +157,22 @@ def test_simple_replication1(cluster_context):
     assert 'test12' == rs[0][0]
     for standby in cluster.standbies:
         assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['test12']], 6)
+            partial(standby.pg_execute, select_sql, db=DB), [['test12']], 3)
     master.pg_execute("update person.addresstype set name='foo' "
                       "where addresstypeid=1", db=DB)
     for standby in cluster.standbies:
         assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['foo']], 6)
+            partial(standby.pg_execute, select_sql, db=DB), [['foo']], 3)
 
 
-def test_pcs_standby(cluster_context):
+def test_pcs_standby(cluster_context: ClusterContext):
     cluster_context.setup()
     cluster = cluster_context.cluster
     master = cluster.master
     standby = cluster.standbies[-1]
     cluster.ha_standby(standby)
-    assert expect_online_nodes(cluster, {vm.name for vm in cluster.vms[:-1]}, 20)
+    assert expect_online_nodes(
+        cluster, {vm.name for vm in cluster.vms[:-1]}, 20)
     with pytest.raises(Exception):
         standby.pg_execute("select 1")
     master.pg_execute("update person.addresstype set name='test12' "
@@ -164,7 +185,7 @@ def test_pcs_standby(cluster_context):
         partial(standby.pg_execute, select_sql, db=DB), [['test12']], 6)
 
 
-def test_kill_standby(cluster_context):
+def test_kill_standby(cluster_context: ClusterContext):
     """
     Action: poweroff a standby
     Action: sleep 15 seconds
@@ -205,7 +226,7 @@ def test_kill_standby(cluster_context):
         partial(killed_standby.pg_execute, select_sql, db=DB), [['a']], 10)
 
 
-def test_trigger_switchover(cluster_context):
+def test_trigger_switchover(cluster_context: ClusterContext):
     cluster_context.setup()
     cluster = cluster_context.cluster
     sleep(5)
@@ -222,7 +243,7 @@ def test_trigger_switchover(cluster_context):
             partial(standby.pg_execute, select_sql, db=DB), [['c']], 20)
 
 
-def test_kill_master(cluster_context):
+def test_kill_master(cluster_context: ClusterContext):
     """
     Action: poweroff standbies while running updates on master
     Action: poweroff master

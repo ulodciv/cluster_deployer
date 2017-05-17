@@ -107,14 +107,14 @@ meta-data
 validate-all"""
 ACTION = sys.argv[1] if len(sys.argv) > 1 else None
 _logtag = None
-_rcs_inst = None
+_rcs_name = None
 
 
-def get_rcs_inst():
-    global _rcs_inst
-    if not _rcs_inst:
-        _rcs_inst = os.environ['OCF_RESOURCE_INSTANCE']
-    return _rcs_inst
+def get_rsc_name():
+    global _rcs_name
+    if not _rcs_name:
+        _rcs_name = os.environ['OCF_RESOURCE_INSTANCE']
+    return _rcs_name
 
 
 def hadate():
@@ -186,7 +186,7 @@ def get_logtag():
     global _logtag
     if not _logtag:
         _logtag = "{}:{}({})[{}]".format(
-            PROGRAM, ACTION, get_rcs_inst(), os.getpid())
+            PROGRAM, ACTION, get_rsc_name(), os.getpid())
     return _logtag
 
 
@@ -443,7 +443,7 @@ def get_pgctrldata_state():
     if not finds:
         log_crit("couldn't read state from controldata file for {}", datadir)
         sys.exit(OCF_ERR_CONFIGURED)
-    log_debug("state of {} is '{}'", get_rcs_inst(), finds[0])
+    log_debug("state of {} is '{}'", get_rsc_name(), finds[0])
     return finds[0]
 
 
@@ -613,7 +613,7 @@ def set_promotion_score(score, node=None):
 
 
 def ocf_promote():
-    inst = get_rcs_inst()
+    inst = get_rsc_name()
     state = is_master_or_standby(inst)
     if state == OCF_RUNNING_MASTER:
         # Already a master. Unexpected, but not a problem.
@@ -814,8 +814,7 @@ def notify_pre_promote(nodes):
     # the same notification to compare our LSN with them during promotion
     active_nodes = defaultdict(int)
     if promoting == node:
-        # build the list of active nodes:
-        #   master + slave + start - stop
+        # build the list of active nodes:  master + slave + start - stop
         for uname in chain(nodes["master"], nodes["slave"], nodes["start"]):
             active_nodes[uname] += 1
         for uname in nodes["stop"]:
@@ -848,7 +847,7 @@ def notify_pre_demote(nodes):
     # To avoid this, we try to start the instance in recovery from here.
     # If it success, at least it will be demoted correctly with a normal
     # status. If it fails, it will be catched up in next steps.
-    log_info("trying to start failing master {}", get_rcs_inst())
+    log_info("trying to start failing master {}", get_rsc_name())
     # Either the instance managed to start or it couldn't.
     # We rely on the pg_ctk '-w' switch to take care of this. If it couldn't
     # start, this error will be catched up later during the various checks
@@ -874,7 +873,7 @@ def notify_pre_stop(nodes):
     # do nothing if the local node will not be stopped
     if node not in nodes["stop"]:
         return OCF_SUCCESS
-    inst = get_rcs_inst()
+    inst = get_rsc_name()
     rc = get_non_transitional_pg_state(inst)
     # do nothing if this is not a standby recovery
     standby_recovery = node in nodes["slave"] and node in nodes["start"]
@@ -971,7 +970,7 @@ def ocf_validate_all():
 def ocf_start():
     """ Start as a standby """
     rc = get_ocf_state()
-    inst = get_rcs_inst()
+    inst = get_rsc_name()
     prev_state = get_pgctrldata_state()
     # Instance must be stopped or running as standby
     if rc == OCF_SUCCESS:
@@ -1012,7 +1011,7 @@ def ocf_start():
 def ocf_stop():
     """ Return OCF_SUCCESS or OCF_ERR_GENERIC """
     rc = get_ocf_state()
-    inst = get_rcs_inst()
+    inst = get_rsc_name()
     if rc == OCF_NOT_RUNNING:
         log_info("{} already stopped", inst)
         return OCF_SUCCESS
@@ -1040,7 +1039,7 @@ def loop_until_pgisready():
 
 def ocf_monitor():
     pgisready_rc = run_pgisready()
-    inst = get_rcs_inst()
+    inst = get_rsc_name()
     if pgisready_rc == 0:
         log_debug("PG is listening, checking if it is a master or standby")
         status = is_master_or_standby(inst)
@@ -1088,7 +1087,7 @@ def ocf_monitor():
 
 def get_ocf_state():
     pgisready_rc = run_pgisready()
-    inst = get_rcs_inst()
+    inst = get_rsc_name()
     if pgisready_rc == 0:
         log_debug("{} is listening", inst)
         return is_master_or_standby(inst)
@@ -1158,19 +1157,16 @@ def get_ocf_state():
 
 def ocf_demote():
     """ Demote the PostgreSQL instance from master to standby:
-      - stop it gracefully
-      - create recovery.conf
-      - start it back """
-    inst = get_rcs_inst()
+      - ocf_demote: stop PG
+      - ocf_start: create recovery.conf and start PG back """
     rc = get_ocf_state()
     if rc == OCF_RUNNING_MASTER:
-        log_debug("{} running as a master", inst)
+        log_debug("PG running as a master")
     elif rc == OCF_SUCCESS:
-        log_debug("{} running as a standby", inst)
+        log_debug("PG running as a standby")
         return OCF_SUCCESS
     elif rc == OCF_NOT_RUNNING:
-        # Instance is stopped. Nothing to do.
-        log_debug("{} stopped", inst)
+        log_debug("PG already stopped stopped")
     elif rc == OCF_ERR_CONFIGURED:
         # We actually prefer raising a hard or fatal error instead of leaving
         # the CRM abording its transition for a new one because of a soft error.
@@ -1191,22 +1187,22 @@ def ocf_demote():
         # insanely long timeout to ensure Pacemaker gives up firt
         rc = pg_ctl_stop()
         if rc != 0:
-            log_err("failed to stop {} (pg_ctl exited with {})", inst, rc)
+            log_err("failed to stop PG (pg_ctl exited with {})", rc)
             return OCF_ERR_GENERIC
         # Double check that the instance is stopped correctly.
         rc = get_ocf_state()
         if rc != OCF_NOT_RUNNING:
-            log_err("unexpected {} state: monitor status "
-                    "({}) disagree with pg_ctl return code", inst, rc)
+            log_err("unexpected state: monitor status "
+                    "({}) disagree with pg_ctl return code", rc)
             return OCF_ERR_GENERIC
     # At this point, the instance MUST be stopped gracefully.
     # What we are left to do here is to start again which will do the actual
     # demotion by mean of setting up the recovery.conf.
     rc = ocf_start()
     if rc == OCF_SUCCESS:
-        log_info("{} started as a standby", inst)
+        log_info("PG started as a standby")
         return OCF_SUCCESS
-    log_err("failed to start {} as standby (returned {})", inst, rc)
+    log_err("failed to start PG as standby (returned {})", rc)
     return OCF_ERR_GENERIC
 
 

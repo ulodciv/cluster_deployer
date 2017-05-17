@@ -164,7 +164,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_set_param("hot_standby", "on")
         self.pg_set_param("hot_standby_feedback", "on")
         self.pg_set_param("wal_receiver_timeout", "5000")  # ms
-        self.pg_set_param("wal_retrieve_retry_interval", "1000")  # ms
+        self.pg_set_param("wal_retrieve_retry_interval", "3000")  # ms
 
     def pg_write_recovery_for_pcmk(self, virtual_ip):
         repl_user = self.pg_repl_user
