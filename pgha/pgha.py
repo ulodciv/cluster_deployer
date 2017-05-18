@@ -772,9 +772,6 @@ def notify_pre_promote(nodes):
 
     del_private_attributes()
 
-    # If the sub keeps going, that means the switchover is safe.
-    # Keep going with the election process in case the switchover was
-    # instruct to the wrong node.
     # FIXME: should we allow a switchover to a lagging standby?
 
     # We need to trigger an election between existing slaves to promote the best
@@ -985,8 +982,8 @@ def start_pg():
     if not delete_replication_slots():
         log_err("failed to delete all replication slots")
         return OCF_ERR_GENERIC
-    # On first cluster start, no score exists on any standbies unless manually
-    # set with crm_master. Without scores, the cluster won't promote any slave.
+    # On first cluster start, no score exists on standbies unless someone sets
+    # them with crm_master. Without scores, the cluster won't promote any slave.
     # Fix that by setting a score of 1, but only if this node was a master
     # before, hence picking the node that was used as master during setup.
     if prev_state == "shut down" and no_node_has_a_positive_score():
