@@ -63,14 +63,14 @@ class Postgres(Ssh, metaclass=ABCMeta):
     def pg_recovery_file(self):
         if self._pg_recovery_file is None:
             self._pg_recovery_file = PurePosixPath(
-                self.pg_data_directory) / "recovery.conf"
+                self.pg_datadir) / "recovery.conf"
         return self._pg_recovery_file
 
     @property
     def pg_pcmk_recovery_file(self):
         if self._pg_pcmk_recovery_file is None:
             self._pg_pcmk_recovery_file = PurePosixPath(
-                self.pg_data_directory) / "recovery.conf.pcmk"
+                self.pg_datadir) / "recovery.conf.pcmk"
         return self._pg_pcmk_recovery_file
 
     def pg_current_setting2(self, setting) -> str:
@@ -99,7 +99,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         return self._pg_hba_file
 
     @property
-    def pg_data_directory(self) -> str:
+    def pg_datadir(self) -> str:
         if self._pg_data_directory is None:
             self._pg_data_directory = self.pg_current_setting("data_directory")
         return self._pg_data_directory
@@ -145,6 +145,15 @@ class Postgres(Ssh, metaclass=ABCMeta):
             self.log(f"pg_execute results:\n{res}")
             return res
 
+    def pg_get_server_pid(self):
+        pid_file = (
+            PurePosixPath(self.pg_datadir) / PurePosixPath("postmaster.pid"))
+        with self.open_sftp(self.pg_user) as sftp:
+            s = sftp.file(str(pid_file)).read()
+        if not s:
+            return None
+        return s.splitlines()[0].strip()
+
     def pg_create_db(self, db: str):
         self.ssh_run_check(f"createdb {db}", user=self.pg_user)
 
@@ -189,8 +198,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
         systemctl start postgresql-9.6
         """
         self.ssh_run_check([
-            f"mv {master.pg_data_directory} data_old",
-            f"pg_basebackup -h {master.name} -D {master.pg_data_directory} "
+            f"mv {master.pg_datadir} data_old",
+            f"pg_basebackup -h {master.name} -D {master.pg_datadir} "
             f"-U {master.pg_repl_user} -Xs"],
             user=self.pg_user)
         self.ssh_run_check(

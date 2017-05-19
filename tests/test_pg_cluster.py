@@ -92,11 +92,11 @@ class ClusterContext:
         self.cluster = Cluster(None, self.cluster_json)
         cluster = self.cluster
         cluster.deploy()
-        sleep(10)
         expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
         # return
         cluster.ha_standby_all()
-        sleep(10)  # let vms settle a bit before taking snapshots
+        expect_online_nodes(cluster, set(), 30)
+        sleep(1)  # let vms settle a bit before taking snapshots
         for vm in cluster.vms:
             vm.vm_pause()
         for vm in cluster.vms:
@@ -116,11 +116,9 @@ class ClusterContext:
         cluster.master = cluster.vms[0]
         for vm in cluster.vms:
             vm.vm_start()
-        sleep(2)
         for vm in cluster.vms:
             vm.wait_until_port_is_open(22, 10)
         cluster.ha_unstandby_all()
-        sleep(2)
         expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
         expect_master_node(cluster, cluster.master.name, 25)
         for standby in cluster.standbies:
@@ -132,7 +130,7 @@ class ClusterContext:
 def cluster_context():
     context = ClusterContext()
     yield context
-    # return
+    return
     for vm in context.cluster.vms:
         try:
             print(vm.vm_poweroff())
@@ -175,17 +173,21 @@ def test_pcs_standby(cluster_context: ClusterContext):
         cluster, {vm.name for vm in cluster.vms[:-1]}, 20)
     with pytest.raises(Exception):
         standby.pg_execute("select 1")
-    master.pg_execute("update person.addresstype set name='test12' "
+    master.pg_execute("update person.addresstype set name='y' "
                       "where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for stdby in cluster.standbies[:-1]:
+        assert expect_query_results(
+            partial(stdby.pg_execute, select_sql, db=DB), [['y']], 3)
     cluster.ha_unstandby(standby)
-    assert expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 10)
+    assert expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 15)
     assert standby.pg_execute("select 1") == [['1']]
     select_sql = "select name from person.addresstype where addresstypeid=1"
     assert expect_query_results(
-        partial(standby.pg_execute, select_sql, db=DB), [['test12']], 6)
+        partial(standby.pg_execute, select_sql, db=DB), [['y']], 6)
 
 
-def test_kill_standby(cluster_context: ClusterContext):
+def test_kill_standby_host(cluster_context: ClusterContext):
     """
     Action: poweroff a standby
     Action: sleep 15 seconds
@@ -243,7 +245,23 @@ def test_trigger_switchover(cluster_context: ClusterContext):
             partial(standby.pg_execute, select_sql, db=DB), [['c']], 20)
 
 
-def test_kill_master(cluster_context: ClusterContext):
+def test_kill_slave_pg(cluster_context: ClusterContext):
+    pass
+    cluster_context.setup()
+    cluster = cluster_context.cluster
+    master = cluster.master
+    for vm in cluster.vms:
+        print(vm.pg_get_server_pid())
+
+
+def test_kill_master_pg(cluster_context: ClusterContext):
+    pass
+    cluster_context.setup()
+    cluster = cluster_context.cluster
+    master = cluster.master
+
+
+def test_kill_master_host(cluster_context: ClusterContext):
     """
     Action: poweroff standbies while running updates on master
     Action: poweroff master

@@ -195,9 +195,7 @@ def ocf_log(level, msg, *args):
     if os.environ.get('HA_LOGD', "") == 'yes':
         if call(['ha_logger', '-t', LOG_TAG, l]) == 0:
             return 0
-    if ha_logfacility != "":
-        # logging through syslog
-        # loglevel is unknown, use 'notice' for now
+    if ha_logfacility != "":  # logging through syslog
         if level in ("ERROR", "CRIT"):
             level = "err"
         elif level == "WARNING":
@@ -206,7 +204,7 @@ def ocf_log(level, msg, *args):
             level = "info"
         elif level == "DEBUG":
             level = "debug"
-        else:
+        else:  # loglevel is unknown, use 'notice' for now
             level = "notice"
         call(["logger", "-t", LOG_TAG, "-p", ha_logfacility + "." + level, l])
     ha_logfile = os.environ.get("HA_LOGFILE")
@@ -601,7 +599,7 @@ def set_promotion_score(score, node=None):
 def ocf_promote():
     state = is_master_or_standby()
     if state == OCF_RUNNING_MASTER:
-        # Already a master. Unexpected, but not a problem.
+        # Already a master. Unexpected, presumably ok.
         log_warn("PG already running as a master")
         return OCF_SUCCESS
     elif state != OCF_SUCCESS:
@@ -673,14 +671,11 @@ def kill_wal_sender(slot):
 
 
 def kill_wal_senders(slave_nodes):
-    nodename = get_ocf_nodename()
     rc, rs = pg_execute("SELECT slot_name "
                         "FROM pg_replication_slots "
                         "WHERE active_pid IS NOT NULL")
     slots = [r[0] for r in rs]
     for node in slave_nodes:
-        if node == nodename:
-            continue  # TODO: is this check necessary?
         slot = node.replace('-', '_')
         if slot in slots:
             kill_wal_sender(slot)
@@ -693,8 +688,7 @@ def delete_replication_slots():
         return True
     for slot in [r[0] for r in rs]:
         kill_wal_sender(slot)
-        q = "SELECT * FROM pg_drop_replication_slot('{}')".format(slot)
-        rc, rs = pg_execute(q)
+        rc, rs = pg_execute("SELECT pg_drop_replication_slot('{}')".format(slot))
         if rc != 0:
             log_err("failed to delete replication slot {}".format(slot))
             return False
@@ -953,15 +947,15 @@ def ocf_start():
     rc = get_ocf_state()
     # Instance must be stopped or running as standby
     if rc == OCF_SUCCESS:
-        log_info("PG is already started")
+        log_info("PG is already started as a standby")
         return OCF_SUCCESS
-    elif rc != OCF_NOT_RUNNING:
+    if rc != OCF_NOT_RUNNING:
         log_err("unexpected PG state: {}", rc)
         return OCF_ERR_GENERIC
-    return start_pg()
+    return start_pg_as_standby()
 
 
-def start_pg():
+def start_pg_as_standby():
     # From here, the instance is NOT running
     prev_state = get_pgctrldata_state()
     log_debug("starting PG as a standby")
@@ -970,17 +964,12 @@ def start_pg():
     if rc != 0:
         log_err("failed to start PG, rc: {}", rc)
         return OCF_ERR_GENERIC
-    while True:  # Wait for the start to finish.
-        rc = get_ocf_state()
-        if rc != OCF_NOT_RUNNING:
-            break
-        sleep(1)
-    if rc != OCF_SUCCESS:
+    if is_master_or_standby() != OCF_SUCCESS:
         log_err("PG is not running as a standby (returned {})", rc)
         return OCF_ERR_GENERIC
     log_info("PG started")
     if not delete_replication_slots():
-        log_err("failed to delete all replication slots")
+        log_err("failed to delete replication slots")
         return OCF_ERR_GENERIC
     # On first cluster start, no score exists on standbies unless someone sets
     # them with crm_master. Without scores, the cluster won't promote any slave.
@@ -1175,8 +1164,7 @@ def ocf_demote():
             log_err("unexpected state: monitor status "
                     "({}) disagree with pg_ctl return code", rc)
             return OCF_ERR_GENERIC
-    # At this point, PG MUST be stopped gracefully. Start PG back as a standby.
-    rc = start_pg()
+    rc = start_pg_as_standby()
     if rc == OCF_SUCCESS:
         log_info("PG started as a standby")
         return OCF_SUCCESS
@@ -1216,6 +1204,24 @@ def ocf_notify():
     return OCF_SUCCESS
 
 
+OCF_EXIT_CODES = {
+    OCF_SUCCESS: "SUCCESS",
+    OCF_ERR_GENERIC: "ERR_GENERIC",
+    OCF_ERR_ARGS: "ERR_ARGS",
+    OCF_ERR_UNIMPLEMENTED: "ERR_UNIMPLEMENTED",
+    OCF_ERR_PERM: "ERR_PERM",
+    OCF_ERR_INSTALLED: "ERR_INSTALLED",
+    OCF_ERR_CONFIGURED: "ERR_CONFIGURED",
+    OCF_NOT_RUNNING: "NOT_RUNNING",
+    OCF_RUNNING_MASTER: "RUNNING_MASTER",
+    OCF_FAILED_MASTER: "FAILED_MASTER"}
+
+
+def log_and_exit(code):
+    log_info("{} exiting with {} ({})", ACTION, OCF_EXIT_CODES[code], code)
+    sys.exit(code)
+
+
 if __name__ == "__main__":
     if ACTION == "meta-data":
         print(OCF_META_DATA)
@@ -1231,20 +1237,20 @@ if __name__ == "__main__":
         log_err("OCF_RESKEY_CRM_meta_master_max should == 1")
         sys.exit(OCF_ERR_CONFIGURED)
     if ACTION == "validate-all":
-        sys.exit(ocf_validate_all())
+        log_and_exit(ocf_validate_all())
     if ACTION in ("start", "stop", "monitor", "promote", "demote", "notify"):
         ocf_validate_all()
         if ACTION == "start":  # start as standby
-            sys.exit(ocf_start())
+            log_and_exit(ocf_start())
         if ACTION == "stop":
-            sys.exit(ocf_stop())
+            log_and_exit(ocf_stop())
         if ACTION == "monitor":
-            sys.exit(ocf_monitor())
+            log_and_exit(ocf_monitor())
         if ACTION == "promote":  # makes it a master
-            sys.exit(ocf_promote())
+            log_and_exit(ocf_promote())
         if ACTION == "demote":
-            sys.exit(ocf_demote())
+            log_and_exit(ocf_demote())
         if ACTION == "notify":
-            sys.exit(ocf_notify())
+            log_and_exit(ocf_notify())
     else:
         sys.exit(OCF_ERR_UNIMPLEMENTED)

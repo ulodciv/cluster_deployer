@@ -223,11 +223,6 @@ class Ssh(Linux, metaclass=ABCMeta):
                     f"{e}")
             yield client
 
-    @contextmanager
-    def open_sftp(self, user="root"):
-        with self.open_ssh(user) as ssh:
-            yield ssh.open_sftp()
-
     def ssh_run_(self, user, ssh, command, *,
                  check=False, get_output=True):
         self.log(f"{user}: [{command}]")
