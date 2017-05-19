@@ -5,9 +5,9 @@ It includes a modified Python translation of
 [PAF](https://github.com/dalibo/PAF), a multi-state Pacemaker Resource Agent 
 (RA) for Postgresql.
 
-There are some unit tests and functional tests (eg test PG replication, test 
-killing-adding back a slave, test "pcs stanby/unstandby" a slave), but more 
-tests are needed to confirm the RA works properly in most scenarios.
+There are some unit tests and
+[functional tests](https://github.com/ulodciv/deploy_cluster/wiki/Functional-Tests),
+but more tests are needed to confirm the RA works properly in most scenarios.
 
 # Requirements (for the deployer):
 

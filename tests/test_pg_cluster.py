@@ -41,14 +41,18 @@ def expect_online_nodes(cluster, expected_nodes, timeout):
 
 
 def expect_master_node(cluster, expected_master, timeout):
+    if expected_master:
+        expected_masters = [expected_master]
+    else:
+        expected_masters = []
     start_time = time()
     while True:
         masters = cluster.ha_resource_masters("pgsql-ha")
-        if masters == [expected_master]:
+        if masters == expected_masters:
             print(f"got expected masters in cluster: {masters}")
             return True
         print(f"did not get expected masters in cluster, "
-              f"expected: {[expected_master]}, got {masters}")
+              f"expected: {expected_masters}, got {masters}")
         if time() - start_time > timeout:
             return False
         sleep(1)
@@ -63,6 +67,18 @@ def expect_node_in_recovery_or_not(expect_in_recovery, node, timeout):
             return True
         print(f"did not get expected in_recovery, "
               f"expected: {expect_in_recovery}, got {in_recovery}")
+        if time() - start_time > timeout:
+            return False
+        sleep(1)
+
+
+def expect_pg_isready(node, timeout):
+    start_time = time()
+    while True:
+        if node.pg_isready():
+            print(f"PG is ready")
+            return True
+        print(f"PG is not ready")
         if time() - start_time > timeout:
             return False
         sleep(1)
@@ -130,7 +146,7 @@ class ClusterContext:
 def cluster_context():
     context = ClusterContext()
     yield context
-    return
+    # return
     for vm in context.cluster.vms:
         try:
             print(vm.vm_poweroff())
@@ -187,7 +203,7 @@ def test_pcs_standby(cluster_context: ClusterContext):
         partial(standby.pg_execute, select_sql, db=DB), [['y']], 6)
 
 
-def test_kill_standby_host(cluster_context: ClusterContext):
+def test_kill_standby_machine(cluster_context: ClusterContext):
     """
     Action: poweroff a standby
     Action: sleep 15 seconds
@@ -246,22 +262,74 @@ def test_trigger_switchover(cluster_context: ClusterContext):
 
 
 def test_kill_slave_pg(cluster_context: ClusterContext):
-    pass
     cluster_context.setup()
     cluster = cluster_context.cluster
     master = cluster.master
-    for vm in cluster.vms:
-        print(vm.pg_get_server_pid())
+    killed = cluster.standbies[-1]
+    other_standbies = cluster.standbies[:-1]
+
+    # send TERM to server process
+    killed.ssh_run_check(f"kill {killed.pg_get_server_pid()}")
+    assert not killed.pg_isready()
+    master.pg_execute(
+        "update person.addresstype set name='xx' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in other_standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['xx']], 10)
+    assert killed.wait_until_port_is_open(killed.pg_port, 30)
+    assert expect_query_results(
+        partial(killed.pg_execute, select_sql, db=DB), [['xx']], 10)
+
+    sleep(2)  # action start might not be done yet
+
+    # send KILL to server process
+    killed.ssh_run_check(f"kill -9 {killed.pg_get_server_pid()}")
+    assert not killed.pg_isready()
+    master.pg_execute(
+        "update person.addresstype set name='yy' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in other_standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['yy']], 10)
+    assert killed.wait_until_port_is_open(killed.pg_port, 30)
+    assert expect_query_results(
+        partial(killed.pg_execute, select_sql, db=DB), [['yy']], 10)
 
 
 def test_kill_master_pg(cluster_context: ClusterContext):
-    pass
     cluster_context.setup()
     cluster = cluster_context.cluster
     master = cluster.master
 
+    # send TERM to server process
+    master.ssh_run_check(f"kill {master.pg_get_server_pid()}")
+    assert expect_master_node(cluster, None, 30)
+    assert expect_master_node(cluster, master.name, 30)
+    assert expect_pg_isready(master, 30)
+    assert expect_node_in_recovery_or_not(False, master, 10)
+    master.pg_execute(
+        "update person.addresstype set name='xx' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in cluster.standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['xx']], 10)
 
-def test_kill_master_host(cluster_context: ClusterContext):
+    # send KILL to server process
+    master.ssh_run_check(f"kill -9 {master.pg_get_server_pid()}")
+    assert expect_master_node(cluster, None, 30)
+    assert expect_master_node(cluster, master.name, 30)
+    assert expect_pg_isready(master, 30)
+    assert expect_node_in_recovery_or_not(False, master, 10)
+    master.pg_execute(
+        "update person.addresstype set name='yy' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in cluster.standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['yy']], 10)
+
+
+def test_kill_master_machine(cluster_context: ClusterContext):
     """
     Action: poweroff standbies while running updates on master
     Action: poweroff master

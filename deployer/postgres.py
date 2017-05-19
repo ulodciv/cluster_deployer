@@ -12,11 +12,12 @@ class Postgres(Ssh, metaclass=ABCMeta):
     pg_version = "9.6"
     pg_lock = Lock()
 
-    def __init__(self, *, pg_user, pg_repl_user, **kwargs):
+    def __init__(self, *, pg_port, pg_user, pg_repl_user, **kwargs):
         super(Postgres, self).__init__(**kwargs)
         self.pg_user = pg_user
         self.pg_repl_user = pg_repl_user
         self.pg_slot = self.name.replace('-', '_')
+        self.pg_port = pg_port
         self._pg_service = None
         self._pg_data_directory = None
         self._pg_hba_file = None
@@ -74,7 +75,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         return self._pg_pcmk_recovery_file
 
     def pg_current_setting2(self, setting) -> str:
-        c = f'psql -t -c "select current_setting(\'{setting}\');"'
+        c = f'psql -p {self.pg_port} -t -c "select current_setting(\'{setting}\');"'
         o = self.ssh_run_check(c, user=self.pg_user, get_output=True)
         return o.strip()
 
@@ -133,8 +134,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
     def pg_execute(self, sql, *, db="postgres"):
         rs, rs_bash = chr(30), r'\036'  # record separator
         fs, fs_bash = chr(3), r'\003'  # end of text
-        cmd = ["psql", "-d", db, "-v", "ON_ERROR_STOP=1", "-qXAt",
-               "-R", rs_bash, "-F", fs_bash, "-c", f'"{sql};"']
+        cmd = ["psql", "-p", self.pg_port, "-d", db, "-v", "ON_ERROR_STOP=1",
+               "-qXAt", "-R", rs_bash, "-F", fs_bash, "-c", f'"{sql};"']
         o = self.ssh_run_check(
             " ".join(cmd), user=self.pg_user, get_output=True)
         if o:
@@ -145,24 +146,32 @@ class Postgres(Ssh, metaclass=ABCMeta):
             self.log(f"pg_execute results:\n{res}")
             return res
 
+    def pg_isready(self):
+        exe = str(PurePosixPath(self.pg_bindir) / "pg_isready")
+        try:
+            self.ssh_run_check(f"{exe} -p {self.pg_port}", user=self.pg_user)
+            return True
+        except DeployerError:
+            return False
+
     def pg_get_server_pid(self):
-        pid_file = (
-            PurePosixPath(self.pg_datadir) / PurePosixPath("postmaster.pid"))
+        pid_file = PurePosixPath(self.pg_datadir) / "postmaster.pid"
         with self.open_sftp(self.pg_user) as sftp:
             s = sftp.file(str(pid_file)).read()
         if not s:
             return None
-        return s.splitlines()[0].strip()
+        return s.splitlines()[0].strip().decode()
 
     def pg_create_db(self, db: str):
-        self.ssh_run_check(f"createdb {db}", user=self.pg_user)
+        self.ssh_run_check(f"createdb -p {self.pg_port} {db}",
+                           user=self.pg_user)
 
     def pg_drop_db(self, db: str):
-        self.ssh_run(f"dropdb {db}", user=self.pg_user)
+        self.ssh_run(f"dropdb -p {self.pg_port} {db}", user=self.pg_user)
 
     def pg_create_replication_user(self):
         self.ssh_run_check(
-            f'createuser {self.pg_repl_user} --replication',
+            f'createuser -p {self.pg_port} {self.pg_repl_user} --replication',
             user=self.pg_user)
 
     def pg_make_master(self, all_hosts):
@@ -180,7 +189,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self._pg_add_to_pcmk_recovery_conf("standby_mode", "on")
         self._pg_add_to_pcmk_recovery_conf("recovery_target_timeline", "latest")
         self._pg_add_to_pcmk_recovery_conf(
-            "primary_conninfo", f"host={virtual_ip} port=5432 user={repl_user}")
+            "primary_conninfo",
+            f"host={virtual_ip} port={self.pg_port} user={repl_user}")
         self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
 
     def pg_standby_backup_from_master(self, master: 'Postgres'):
@@ -199,8 +209,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
         """
         self.ssh_run_check([
             f"mv {master.pg_datadir} data_old",
-            f"pg_basebackup -h {master.name} -D {master.pg_datadir} "
-            f"-U {master.pg_repl_user} -Xs"],
+            f"pg_basebackup -h {master.name} -p {self.pg_port} "
+            f"-D {master.pg_datadir} -U {master.pg_repl_user} -Xs"],
             user=self.pg_user)
         self.ssh_run_check(
             f"sed -i s/{master.name}/{self.name}/ {master.pg_pcmk_recovery_file}",

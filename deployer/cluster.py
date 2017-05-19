@@ -272,12 +272,13 @@ class Cluster:
             f"pgbindir={master.pg_bindir} "
             f"pgdata={master.pg_datadir} "
             f"pgconf={master.pg_config_file} "
+            f"pgport={master.pg_port} "
             f"op start timeout=60s "
             f"op stop timeout=60s "
             f"op promote timeout=120s "
             f"op demote timeout=120s "
-            f"op monitor interval=15s timeout=10s role=\"Master\" "
-            f"op monitor interval=16s timeout=10s role=\"Slave\" "
+            f"op monitor interval=10s timeout=10s role=\"Master\" "
+            f"op monitor interval=11s timeout=10s role=\"Slave\" "
             f"op notify timeout=60s")
         self._pcs_xml(f"resource master pgsql-ha {self.ha_pg_resource} "
                       f"clone-max=10 notify=true")
@@ -320,7 +321,7 @@ class PostgresVboxVm(Vbox, Postgres):
         self.pg_drop_db(db)
         self.pg_create_db(db)
         self.ssh_run_check(
-            f"cd /tmp/{db} && psql -v ON_ERROR_STOP=1 -t -q "
+            f"cd /tmp/{db} && psql -p {self.pg_port} -v ON_ERROR_STOP=1 -t -q "
             f"-f install.sql {db}",
             user=self.pg_user)
         self.ssh_run_check(f'rm -rf /tmp/{db}')
