@@ -18,7 +18,7 @@ but more tests are needed to confirm the RA works properly in most scenarios.
 
 # Usage
 
-1. Set up a VirtualBox VM that has:
+1. [Set up a VirtualBox VM](https://docs.google.com/spreadsheets/d/11X_08SDureZ3w_JtihwkJca39ldbIaz9yn7CZgZM9a8/edit?usp=sharing) that has:
     - CentOS/RHEL 7, Debian 9, or Ubuntu Zesty
     - SELinux disabled
     - VirtualBox guest additions
