@@ -203,6 +203,23 @@ def test_pcs_standby(cluster_context: ClusterContext):
         partial(standby.pg_execute, select_sql, db=DB), [['y']], 6)
 
 
+def test_trigger_switchover(cluster_context: ClusterContext):
+    cluster_context.setup()
+    cluster = cluster_context.cluster
+    sleep(5)
+    cluster.master.ssh_run_check(
+        f"crm_master -v 10000 -N {cluster.standbies[0].name} "
+        f"-r {cluster.ha_pg_resource}")
+    cluster.master = cluster.standbies[0]
+    assert expect_master_node(cluster, cluster.master.name, 25)
+    cluster.master.pg_execute(
+        "update person.addresstype set name='c' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in cluster.standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['c']], 20)
+
+
 def test_kill_standby_machine(cluster_context: ClusterContext):
     """
     Action: poweroff a standby
@@ -242,91 +259,6 @@ def test_kill_standby_machine(cluster_context: ClusterContext):
     sleep(1)
     assert expect_query_results(
         partial(killed_standby.pg_execute, select_sql, db=DB), [['a']], 10)
-
-
-def test_trigger_switchover(cluster_context: ClusterContext):
-    cluster_context.setup()
-    cluster = cluster_context.cluster
-    sleep(5)
-    cluster.master.ssh_run_check(
-        f"crm_master -v 10000 -N {cluster.standbies[0].name} "
-        f"-r {cluster.ha_pg_resource}")
-    cluster.master = cluster.standbies[0]
-    assert expect_master_node(cluster, cluster.master.name, 25)
-    cluster.master.pg_execute(
-        "update person.addresstype set name='c' where addresstypeid=1", db=DB)
-    select_sql = "select name from person.addresstype where addresstypeid=1"
-    for standby in cluster.standbies:
-        assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['c']], 20)
-
-
-def test_kill_slave_pg(cluster_context: ClusterContext):
-    cluster_context.setup()
-    cluster = cluster_context.cluster
-    master = cluster.master
-    killed = cluster.standbies[-1]
-    other_standbies = cluster.standbies[:-1]
-
-    # send TERM to server process
-    killed.ssh_run_check(f"kill {killed.pg_get_server_pid()}")
-    assert not killed.pg_isready()
-    master.pg_execute(
-        "update person.addresstype set name='xx' where addresstypeid=1", db=DB)
-    select_sql = "select name from person.addresstype where addresstypeid=1"
-    for standby in other_standbies:
-        assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['xx']], 10)
-    assert killed.wait_until_port_is_open(killed.pg_port, 30)
-    assert expect_query_results(
-        partial(killed.pg_execute, select_sql, db=DB), [['xx']], 10)
-
-    sleep(2)  # action start might not be done yet
-
-    # send KILL to server process
-    killed.ssh_run_check(f"kill -9 {killed.pg_get_server_pid()}")
-    assert not killed.pg_isready()
-    master.pg_execute(
-        "update person.addresstype set name='yy' where addresstypeid=1", db=DB)
-    select_sql = "select name from person.addresstype where addresstypeid=1"
-    for standby in other_standbies:
-        assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['yy']], 10)
-    assert killed.wait_until_port_is_open(killed.pg_port, 30)
-    assert expect_query_results(
-        partial(killed.pg_execute, select_sql, db=DB), [['yy']], 10)
-
-
-def test_kill_master_pg(cluster_context: ClusterContext):
-    cluster_context.setup()
-    cluster = cluster_context.cluster
-    master = cluster.master
-
-    # send TERM to server process
-    master.ssh_run_check(f"kill {master.pg_get_server_pid()}")
-    assert expect_master_node(cluster, None, 30)
-    assert expect_master_node(cluster, master.name, 30)
-    assert expect_pg_isready(master, 30)
-    assert expect_node_in_recovery_or_not(False, master, 10)
-    master.pg_execute(
-        "update person.addresstype set name='xx' where addresstypeid=1", db=DB)
-    select_sql = "select name from person.addresstype where addresstypeid=1"
-    for standby in cluster.standbies:
-        assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['xx']], 10)
-
-    # send KILL to server process
-    master.ssh_run_check(f"kill -9 {master.pg_get_server_pid()}")
-    assert expect_master_node(cluster, None, 30)
-    assert expect_master_node(cluster, master.name, 30)
-    assert expect_pg_isready(master, 30)
-    assert expect_node_in_recovery_or_not(False, master, 10)
-    master.pg_execute(
-        "update person.addresstype set name='yy' where addresstypeid=1", db=DB)
-    select_sql = "select name from person.addresstype where addresstypeid=1"
-    for standby in cluster.standbies:
-        assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['yy']], 10)
 
 
 def test_kill_master_machine(cluster_context: ClusterContext):
@@ -402,3 +334,71 @@ def test_kill_master_machine(cluster_context: ClusterContext):
     # killed_master.vm_start()
     # sleep(20)
     # cluster.ha_start(killed_master)
+
+
+def test_kill_slave_pg(cluster_context: ClusterContext):
+    cluster_context.setup()
+    cluster = cluster_context.cluster
+    master = cluster.master
+    killed = cluster.standbies[-1]
+    other_standbies = cluster.standbies[:-1]
+
+    # send TERM to server process
+    killed.ssh_run_check(f"kill {killed.pg_get_server_pid()}")
+    assert not killed.pg_isready()
+    master.pg_execute(
+        "update person.addresstype set name='xx' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in other_standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['xx']], 10)
+    assert killed.wait_until_port_is_open(killed.pg_port, 30)
+    assert expect_query_results(
+        partial(killed.pg_execute, select_sql, db=DB), [['xx']], 10)
+
+    sleep(2)  # action start might not be done yet
+
+    # send KILL to server process
+    killed.ssh_run_check(f"kill -9 {killed.pg_get_server_pid()}")
+    assert not killed.pg_isready()
+    master.pg_execute(
+        "update person.addresstype set name='yy' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in other_standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['yy']], 10)
+    assert killed.wait_until_port_is_open(killed.pg_port, 30)
+    assert expect_query_results(
+        partial(killed.pg_execute, select_sql, db=DB), [['yy']], 10)
+
+
+def test_kill_master_pg(cluster_context: ClusterContext):
+    cluster_context.setup()
+    cluster = cluster_context.cluster
+    master = cluster.master
+
+    # send TERM to server process
+    master.ssh_run_check(f"kill {master.pg_get_server_pid()}")
+    assert expect_master_node(cluster, None, 30)
+    assert expect_master_node(cluster, master.name, 30)
+    assert expect_pg_isready(master, 30)
+    assert expect_node_in_recovery_or_not(False, master, 10)
+    master.pg_execute(
+        "update person.addresstype set name='xx' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in cluster.standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['xx']], 10)
+
+    # send KILL to server process
+    master.ssh_run_check(f"kill -9 {master.pg_get_server_pid()}")
+    assert expect_master_node(cluster, None, 30)
+    assert expect_master_node(cluster, master.name, 30)
+    assert expect_pg_isready(master, 30)
+    assert expect_node_in_recovery_or_not(False, master, 10)
+    master.pg_execute(
+        "update person.addresstype set name='yy' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in cluster.standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['yy']], 10)
