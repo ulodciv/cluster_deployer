@@ -1,5 +1,5 @@
 {
-  "ova": "c:/dev/centos7_6.ova",
+  "ova": "../ovas/centos7_6.ova",
   "cluster_name": "PgCluster",
   "ha_pg_resource": "pg",
   "virtual_ip": "192.168.72.251",
@@ -8,7 +8,7 @@
     "postgres",
     "repl1"
   ],
-  "pg_ra": "pgha/pgha.py",
+  "pg_ra": "../pgha/pgha.py",
   "pg_port": "5432",
   "pg_user": "postgres",
   "pg_repl_user": "repl1",

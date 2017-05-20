@@ -1,20 +1,20 @@
-Easily deploy clusters of 2+ nodes with highly available Postgresql. This tool 
+Easily deploy clusters providing highly available resources. This tool 
 is meant to help deploying clusters quickly and reliably in a replicable manner. 
 
-It includes a modified Python translation of 
-[PAF](https://github.com/dalibo/PAF), a multi-state Pacemaker Resource Agent 
-(RA) for Postgresql.
+In its current form, it is specialized to deploy clusters with highly-available 
+Postgresql using a [multi-state Pacemaker resource agent](https://github.com/ulodciv/pgha). 
 
 There are some unit tests and
 [functional tests](https://github.com/ulodciv/deploy_cluster/wiki/Functional-Tests),
-but more tests are needed to confirm the RA works properly in most scenarios.
+but more tests are needed to confirm the RA works properly in most scenarios. 
+This tool makes it easier to write such functional tests.
 
-# Requirements (for the deployer):
+# Requirements
 
-- Linux or Windows
+- This tool can be run on Linux or Windows
 - VirtualBox
-- Python >= 3.6 
-- Python module Paramiko (python -m pip install paramiko)
+- Python >= 3.6 with module Paramiko (python -m pip install paramiko)
+- [pgha.py](https://github.com/ulodciv/pgha)
 
 # Usage
 
@@ -28,7 +28,10 @@ but more tests are needed to confirm the RA works properly in most scenarios.
     
 1. Export the VM as an OVA file 
     
-1. Update the JSON cluster file as needed (config\cluster.json)
+1. Update the JSON cluster file as needed (config/cluster.json)
+    - Set the path to pgha.py
+    - Set hosts and IP addresses
+    - ...
 
 1. Deploy the cluster: 
    
