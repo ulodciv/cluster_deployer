@@ -1,5 +1,6 @@
 import logging
 import re
+import platform
 import shlex
 from subprocess import run, PIPE
 from abc import abstractmethod, ABCMeta
@@ -98,11 +99,47 @@ class Vbox(VmBase):
     _vbox_existing_vms = None
     _vbox_running_vms = None
     _vbox_hostonly_ifs = None
+    _vboxmanage = None
     vbox_lock = Lock()
 
     def __init__(self, *, vboxmanage, **kwargs):
         super(Vbox, self).__init__(**kwargs)
-        self.vboxmanage = vboxmanage
+        if vboxmanage:
+            self.vboxmanage = vboxmanage
+        else:
+            self.vboxmanage = self.get_vboxmanage()
+
+    def get_vbox_hostonly_ifs(self):
+        with Vbox.vbox_lock:
+            if Vbox._vbox_hostonly_ifs is None:
+                s = self.run_vboxmanage('list hostonlyifs')
+                Vbox._vbox_hostonly_ifs = re.findall(
+                        self.RE_HOSTONLYIFS, s, re.M)
+        return Vbox._vbox_hostonly_ifs
+
+    def get_vboxmanage(self):
+        with Vbox.vbox_lock:
+            if Vbox._vboxmanage is None:
+                Vbox._vboxmanage = self.find_vboxmanage()
+        return Vbox._vboxmanage
+
+    def find_vboxmanage(self):
+        if platform.system() == "Linux":
+            return "vboxmanage"
+        res = run("where vboxmanage.exe", stdout=PIPE, stderr=PIPE)
+        if not res.returncode:
+            return res.stdout.decode().strip()
+        f = r"C:\Program Files\Oracle\VirtualBox\vboxmanage.exe"
+        try:
+            if not run([f, "-v"], stdout=PIPE, stderr=PIPE).returncode:
+                return f
+        except FileNotFoundError:
+            pass
+        try:
+            run(["vboxmanage.exe", "-v"], stdout=PIPE, stderr=PIPE)
+            return "vboxmanage.exe"
+        except FileNotFoundError:
+            raise DeployerError("can't find vboxmanage")
 
     def vm_pause(self):
         self.run_vboxmanage(f'controlvm {self.name} pause')

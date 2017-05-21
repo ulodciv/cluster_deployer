@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from cluster import Cluster
+from cluster import VboxPgHaCluster
 
 DB = "demo_db"
 
@@ -28,7 +28,8 @@ def expect_query_results(query_func, expected_results, timeout):
 def expect_online_nodes(cluster, expected_nodes, timeout):
     start_time = time()
     while True:
-        l = cluster.ha_resource_slaves_masters("pgsql-ha")
+        l = cluster.master.ha_resource_slaves_masters(
+            cluster.pgha_resource_master)
         nodes = set(chain(*l))
         if nodes == expected_nodes:
             print(f"got expected nodes in cluster: {nodes}")
@@ -47,7 +48,8 @@ def expect_master_node(cluster, expected_master, timeout):
         expected_masters = []
     start_time = time()
     while True:
-        masters = cluster.ha_resource_masters("pgsql-ha")
+        masters = cluster.master.ha_resource_masters(
+            cluster.pgha_resource_master)
         if masters == expected_masters:
             print(f"got expected masters in cluster: {masters}")
             return True
@@ -105,12 +107,13 @@ class ClusterContext:
         cluster_json = json.load(fh)
 
     def __init__(self):
-        self.cluster = Cluster(None, self.cluster_json)
+        self.cluster = VboxPgHaCluster(
+            cluster_def=self.cluster_json, use_threads=True)
         cluster = self.cluster
         cluster.deploy()
         expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
         # return
-        cluster.ha_standby_all()
+        cluster.master.ha_standby_all()
         expect_online_nodes(cluster, set(), 30)
         sleep(1)  # let vms settle a bit before taking snapshots
         for vm in cluster.vms:
@@ -134,7 +137,7 @@ class ClusterContext:
             vm.vm_start()
         for vm in cluster.vms:
             vm.wait_until_port_is_open(22, 10)
-        cluster.ha_unstandby_all()
+        cluster.master.ha_unstandby_all()
         expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
         expect_master_node(cluster, cluster.master.name, 25)
         for standby in cluster.standbies:
@@ -184,7 +187,7 @@ def test_pcs_standby(cluster_context: ClusterContext):
     cluster = cluster_context.cluster
     master = cluster.master
     standby = cluster.standbies[-1]
-    cluster.ha_standby(standby)
+    master.ha_standby(standby)
     assert expect_online_nodes(
         cluster, {vm.name for vm in cluster.vms[:-1]}, 20)
     with pytest.raises(Exception):
@@ -195,7 +198,7 @@ def test_pcs_standby(cluster_context: ClusterContext):
     for stdby in cluster.standbies[:-1]:
         assert expect_query_results(
             partial(stdby.pg_execute, select_sql, db=DB), [['y']], 3)
-    cluster.ha_unstandby(standby)
+    master.ha_unstandby(standby)
     assert expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 15)
     assert standby.pg_execute("select 1") == [['1']]
     select_sql = "select name from person.addresstype where addresstypeid=1"
@@ -209,7 +212,7 @@ def test_trigger_switchover(cluster_context: ClusterContext):
     sleep(5)
     cluster.master.ssh_run_check(
         f"crm_master -v 10000 -N {cluster.standbies[0].name} "
-        f"-r {cluster.ha_pg_resource}")
+        f"-r {cluster.pgha_resource}")
     cluster.master = cluster.standbies[0]
     assert expect_master_node(cluster, cluster.master.name, 25)
     cluster.master.pg_execute(
@@ -252,7 +255,7 @@ def test_kill_standby_machine(cluster_context: ClusterContext):
             partial(standby.pg_execute, select_sql, db=DB), [['a']], 10)
     killed_standby.vm_start()
     sleep(15)
-    cluster.ha_start_all()
+    master.ha_start_all()
     sleep(5)  # HACK: this should not be necessary
     all_nodes = {vm.name for vm in cluster.vms}
     assert expect_online_nodes(cluster, all_nodes, 25)
@@ -323,13 +326,13 @@ def test_kill_master_machine(cluster_context: ClusterContext):
     cluster.master = new_master
 
     for standby in standbies:
-        cluster.ha_start(standby)
+        new_master.ha_start(standby)
     sleep(5)  # HACK: this should not be necessary
     assert expect_online_nodes(
         cluster, {vm.name for vm in standbies}, 25)
     new_master.ssh_run_check(
         f"crm_master -v 10000 -N {remaining_standbies[0].name} "
-        f"-r {cluster.ha_pg_resource}")
+        f"-r {cluster.pgha_resource}")
     assert expect_master_node(cluster, new_master.name, 25)
     # killed_master.vm_start()
     # sleep(20)

@@ -75,7 +75,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
         return self._pg_pcmk_recovery_file
 
     def pg_current_setting2(self, setting) -> str:
-        c = f'psql -p {self.pg_port} -t -c "select current_setting(\'{setting}\');"'
+        c = (f'psql -p {self.pg_port} -t '
+             f'-c "select current_setting(\'{setting}\');"')
         o = self.ssh_run_check(c, user=self.pg_user, get_output=True)
         return o.strip()
 
@@ -214,11 +215,12 @@ class Postgres(Ssh, metaclass=ABCMeta):
             f"pg_basebackup -h {master.name} -p {self.pg_port} "
             f"-D {master.pg_datadir} -U {master.pg_repl_user} -Xs"],
             user=self.pg_user)
+        pcmk_recovery_file = master.pg_pcmk_recovery_file
         self.ssh_run_check(
-            f"sed -i s/{master.name}/{self.name}/ {master.pg_pcmk_recovery_file}",
+            f"sed -i s/{master.name}/{self.name}/ {pcmk_recovery_file}",
             user=self.pg_user)
         self.ssh_run_check(
-            f"sed -i s/{master.pg_slot}/{self.pg_slot}/ {master.pg_pcmk_recovery_file}",
+            f"sed -i s/{master.pg_slot}/{self.pg_slot}/ {pcmk_recovery_file}",
             user=self.pg_user)
         self.ssh_run_check(
             f"cp {master.pg_pcmk_recovery_file} "
