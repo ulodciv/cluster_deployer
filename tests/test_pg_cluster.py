@@ -149,7 +149,7 @@ class ClusterContext:
 def cluster_context():
     context = ClusterContext()
     yield context
-    return
+    # return
     for vm in context.cluster.vms:
         try:
             print(vm.vm_poweroff())
@@ -409,23 +409,27 @@ def test_kill_master_pg(cluster_context: ClusterContext):
             partial(standby.pg_execute, select_sql, db=DB), [['yy']], 10)
 
 
-# def test_cluster_stop_start(cluster_context: ClusterContext):
-#     cluster_context.setup()
-#     cluster = cluster_context.cluster
-#     master = cluster.master
-#     master.ha_stop_all()
-#     for vm in cluster.vms:
-#         with pytest.raises(Exception):
-#             vm.pg_execute("select 1")
-#     master.ha_start_all()
-#     assert expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 25)
-#     assert expect_master_node(cluster, master.name, 5)
-#     for vm in cluster.vms:
-#         assert expect_pg_isready(vm, 10)
-#     master.pg_execute(
-#         "update person.addresstype set name='ee' where addresstypeid=1", db=DB)
-#     select_sql = "select name from person.addresstype where addresstypeid=1"
-#     for standby in cluster.standbies:
-#         assert expect_query_results(
-#             partial(standby.pg_execute, select_sql, db=DB), [['ee']], 10)
+def test_cluster_stop_start(cluster_context: ClusterContext):
+    cluster_context.setup()
+    cluster = cluster_context.cluster
+    master = cluster.master
+    sleep(5)  # hack
+    master.ha_stop_all()
+    for vm in cluster.vms:
+        with pytest.raises(Exception):
+            vm.pg_execute("select 1")
+    master.ha_start_all()
+    assert expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 25)
+    master.ssh_run_check(
+        f"crm_master -v 10000 -N {master.name} "
+        f"-r {cluster.pgha_resource}")
+    assert expect_master_node(cluster, master.name, 5)
+    for vm in cluster.vms:
+        assert expect_pg_isready(vm, 10)
+    master.pg_execute(
+        "update person.addresstype set name='ee' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in cluster.standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['ee']], 10)
 
