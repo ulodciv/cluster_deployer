@@ -7,9 +7,9 @@ from threading import RLock
 from paramiko import (
     SSHClient, AutoAddPolicy, SSHException, AuthenticationException, SFTPClient)
 
-from deployer_error import DeployerError
-from hosts_file import HostsFile
-from linux import Linux
+from .deployer_error import DeployerError
+from .hosts_file import HostsFile
+from .linux import Linux
 
 
 class PublicKey:
@@ -88,10 +88,12 @@ class Ssh(Linux, metaclass=ABCMeta):
         auth_keys_file = PurePosixPath("/root/.ssh/authorized_keys")
         with self.get_lock_for_file(auth_keys_file):
             with self.ssh_root_with_password() as ssh:
-                self.ssh_run_("root", ssh, f'mkdir -p .ssh', check=True)
-                self.ssh_run_("root", ssh, f'touch {auth_keys_file}', check=True)
-                self.ssh_run_("root", ssh, f'chmod 700 .ssh', check=True)
-                self.ssh_run_("root", ssh, f'chmod 600 {auth_keys_file}', check=True)
+                self._ssh_run("root", ssh, f'mkdir -p .ssh', check=True)
+                self._ssh_run(
+                    "root", ssh, f'touch {auth_keys_file}', check=True)
+                self._ssh_run("root", ssh, f'chmod 700 .ssh', check=True)
+                self._ssh_run(
+                    "root", ssh, f'chmod 600 {auth_keys_file}', check=True)
                 sftp = ssh.open_sftp()
                 with sftp.file(str(auth_keys_file)) as f:
                     keys_str = f.read().decode('utf-8')
@@ -223,7 +225,7 @@ class Ssh(Linux, metaclass=ABCMeta):
                     f"{e}")
             yield client
 
-    def ssh_run_(self, user, ssh, command, *,
+    def _ssh_run(self, user, ssh, command, *,
                  check=False, get_output=True):
         self.log(f"{user}: [{command}]")
         try:
@@ -249,12 +251,12 @@ class Ssh(Linux, metaclass=ABCMeta):
                 user="root", check=False, get_output=False):
         with self.open_ssh(user) as ssh:
             if type(command_or_commands) is str:
-                return self.ssh_run_(user, ssh, command_or_commands,
+                return self._ssh_run(user, ssh, command_or_commands,
                                      check=check, get_output=get_output)
             else:
                 ret = []
                 for command in command_or_commands:
-                    ret.append(self.ssh_run_(
+                    ret.append(self._ssh_run(
                         user, ssh, command,
                         check=check, get_output=get_output))
                 return ret

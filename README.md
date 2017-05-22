@@ -22,19 +22,19 @@ This tool makes it easier to write such functional tests.
     - CentOS/RHEL 7, Debian 9, or Ubuntu Zesty
     - SELinux disabled
     - VirtualBox guest additions
-    - Postgresql 9.6 
+    - Postgresql 9.6 or 10 
     - pcs enabled (disable corosync and pacemaker services)
     - Enable root account (when using Ubuntu)
     
 1. Export the VM as an OVA file 
     
-1. Update the JSON cluster file as needed (config/cluster.json)
+1. Update the JSON cluster file as needed (config/pgha_cluster.json)
     - Set the path to pgha.py
     - Set hosts and IP addresses
     - ...
 
 1. Deploy the cluster: 
    
-        python deployer\app.py config\cluster.json
+       python src/pgha_deployer.py config/pgha_cluster.json
 
 # [TODO](https://github.com/ulodciv/deploy_cluster/wiki/TODO)

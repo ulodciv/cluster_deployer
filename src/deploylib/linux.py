@@ -7,9 +7,9 @@ from enum import Enum, auto
 from ipaddress import IPv4Interface
 from time import sleep, time
 
-from deployer_error import DeployerError
-from hosts_file import CentOsConfigFile
-from vm import VmBase
+from .deployer_error import DeployerError
+from .hosts_file import CentOsConfigFile
+from .vm import VmBase
 
 
 class Distro(Enum):
@@ -53,8 +53,7 @@ class Linux(VmBase, metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def ssh_run_(self, user, ssh, command, *,
-                 check=False, get_output=True):
+    def _ssh_run(self, user, ssh, command, *, check=False, get_output=True):
         pass
 
     @abstractmethod
@@ -110,10 +109,10 @@ class Linux(VmBase, metaclass=ABCMeta):
 
     def add_user(self, user, pwd=None):
         with self.ssh_root_with_password() as ssh:
-            self.ssh_run_("root", ssh, f"useradd -m {user}", check=True)
+            self._ssh_run("root", ssh, f"useradd -m {user}", check=True)
             if not pwd:
                 return
-            self.ssh_run_(
+            self._ssh_run(
                 "root",
                 ssh,
                 (f"chpasswd << END\n"
@@ -123,7 +122,7 @@ class Linux(VmBase, metaclass=ABCMeta):
 
     def _get_user_home_dir(self, user_obj):
         with self.ssh_root_with_password() as ssh:
-            o = self.ssh_run_(
+            o = self._ssh_run(
                 "root",
                 ssh,
                 f"getent passwd {user_obj.user}",

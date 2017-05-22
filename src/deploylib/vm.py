@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Lock
 from time import sleep
 
-from deployer_error import DeployerError
+from .deployer_error import DeployerError
 
 
 class VmBase(metaclass=ABCMeta):
@@ -58,6 +58,15 @@ class VmBase(metaclass=ABCMeta):
         self.log(f"sleeping {seconds} seconds...")
         sleep(seconds)
         self.log("done sleeping")
+
+    def deploy(self, vms):
+        self.vm_deploy(False)
+        self.vm_start_and_get_ip(False)
+        self.wait_until_port_is_open(22, 10)
+        self.setup_users()
+        self.set_hostname()
+        self.set_static_ip()
+        self.add_hosts_to_etc_hosts(vms)
 
 
 class VmWare(VmBase):

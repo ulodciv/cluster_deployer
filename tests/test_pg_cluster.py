@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from cluster import VboxPgHaCluster
+from pgha_deployer import PghaCluster
 
 DB = "demo_db"
 
@@ -107,7 +107,7 @@ class ClusterContext:
         cluster_json = json.load(fh)
 
     def __init__(self):
-        self.cluster = VboxPgHaCluster(
+        self.cluster = PghaCluster(
             cluster_def=self.cluster_json, use_threads=True)
         cluster = self.cluster
         cluster.deploy()
@@ -149,7 +149,7 @@ class ClusterContext:
 def cluster_context():
     context = ClusterContext()
     yield context
-    # return
+    return
     for vm in context.cluster.vms:
         try:
             print(vm.vm_poweroff())
@@ -162,7 +162,7 @@ def cluster_context():
             print(f"exception during delete:\n{e}")
 
 
-def test_simple_replication1(cluster_context: ClusterContext):
+def test_replication(cluster_context: ClusterContext):
     cluster_context.setup()
     cluster = cluster_context.cluster
     master = cluster.master
@@ -215,6 +215,9 @@ def test_trigger_switchover(cluster_context: ClusterContext):
         f"-r {cluster.pgha_resource}")
     cluster.master = cluster.standbies[0]
     assert expect_master_node(cluster, cluster.master.name, 25)
+    for standby in cluster.standbies:
+        assert expect_standby_is_replicating(
+            cluster.master, standby.name, 30)
     cluster.master.pg_execute(
         "update person.addresstype set name='c' where addresstypeid=1", db=DB)
     select_sql = "select name from person.addresstype where addresstypeid=1"
@@ -257,8 +260,7 @@ def test_kill_standby_machine(cluster_context: ClusterContext):
     sleep(15)
     master.ha_start_all()
     sleep(5)  # HACK: this should not be necessary
-    all_nodes = {vm.name for vm in cluster.vms}
-    assert expect_online_nodes(cluster, all_nodes, 25)
+    assert expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 25)
     sleep(1)
     assert expect_query_results(
         partial(killed_standby.pg_execute, select_sql, db=DB), [['a']], 10)
@@ -355,7 +357,7 @@ def test_kill_slave_pg(cluster_context: ClusterContext):
     for standby in other_standbies:
         assert expect_query_results(
             partial(standby.pg_execute, select_sql, db=DB), [['xx']], 10)
-    assert killed.wait_until_port_is_open(killed.pg_port, 30)
+    assert expect_pg_isready(killed, 30)
     assert expect_query_results(
         partial(killed.pg_execute, select_sql, db=DB), [['xx']], 10)
 
@@ -370,7 +372,7 @@ def test_kill_slave_pg(cluster_context: ClusterContext):
     for standby in other_standbies:
         assert expect_query_results(
             partial(standby.pg_execute, select_sql, db=DB), [['yy']], 10)
-    assert killed.wait_until_port_is_open(killed.pg_port, 30)
+    assert expect_pg_isready(killed, 30)
     assert expect_query_results(
         partial(killed.pg_execute, select_sql, db=DB), [['yy']], 10)
 
@@ -405,3 +407,25 @@ def test_kill_master_pg(cluster_context: ClusterContext):
     for standby in cluster.standbies:
         assert expect_query_results(
             partial(standby.pg_execute, select_sql, db=DB), [['yy']], 10)
+
+
+# def test_cluster_stop_start(cluster_context: ClusterContext):
+#     cluster_context.setup()
+#     cluster = cluster_context.cluster
+#     master = cluster.master
+#     master.ha_stop_all()
+#     for vm in cluster.vms:
+#         with pytest.raises(Exception):
+#             vm.pg_execute("select 1")
+#     master.ha_start_all()
+#     assert expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 25)
+#     assert expect_master_node(cluster, master.name, 5)
+#     for vm in cluster.vms:
+#         assert expect_pg_isready(vm, 10)
+#     master.pg_execute(
+#         "update person.addresstype set name='ee' where addresstypeid=1", db=DB)
+#     select_sql = "select name from person.addresstype where addresstypeid=1"
+#     for standby in cluster.standbies:
+#         assert expect_query_results(
+#             partial(standby.pg_execute, select_sql, db=DB), [['ee']], 10)
+

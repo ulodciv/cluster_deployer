@@ -3,17 +3,17 @@ from pathlib import PurePosixPath
 from threading import Lock
 from time import sleep
 
-from deployer_error import DeployerError
-from linux import Distro
-from ssh import Ssh
+from .deployer_error import DeployerError
+from .linux import Distro
+from .ssh import Ssh
 
 
 class Postgres(Ssh, metaclass=ABCMeta):
-    pg_version = "9.6"
     pg_lock = Lock()
 
-    def __init__(self, *, pg_port, pg_user, pg_repl_user, **kwargs):
+    def __init__(self, *, pg_version, pg_port, pg_user, pg_repl_user, **kwargs):
         super(Postgres, self).__init__(**kwargs)
+        self.pg_version = pg_version
         self.pg_user = pg_user
         self.pg_repl_user = pg_repl_user
         self.pg_slot = self.name.replace('-', '_')
@@ -24,8 +24,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self._pg_config_file = None
         self._pg_bindir = None
         self._pg_start_opts = None
-        self._pg_recovery_file = None  # recovery.conf"
-        self._pg_pcmk_recovery_file = None  # recovery.conf.pcmk"
+        self._pg_recovery_file = None  # recovery.conf
+        self._pg_pcmk_recovery_file = None  # recovery.conf.pcmk
 
     @property
     def pg_service(self):
@@ -196,7 +196,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             f"host={virtual_ip} port={self.pg_port} user={repl_user}")
         self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
 
-    def pg_standby_backup_from_master(self, master: 'Postgres'):
+    def pg_backup(self, master: 'Postgres'):
         """
         systemctl stop postgresql-9.6
         mv 9.6/data data_old
@@ -213,18 +213,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.ssh_run_check([
             f"mv {master.pg_datadir} data_old",
             f"pg_basebackup -h {master.name} -p {self.pg_port} "
-            f"-D {master.pg_datadir} -U {master.pg_repl_user} -Xs"],
-            user=self.pg_user)
-        pcmk_recovery_file = master.pg_pcmk_recovery_file
-        self.ssh_run_check(
-            f"sed -i s/{master.name}/{self.name}/ {pcmk_recovery_file}",
-            user=self.pg_user)
-        self.ssh_run_check(
-            f"sed -i s/{master.pg_slot}/{self.pg_slot}/ {pcmk_recovery_file}",
-            user=self.pg_user)
-        self.ssh_run_check(
-            f"cp {master.pg_pcmk_recovery_file} "
-            f"{master.pg_recovery_file}",
+            f"-D {master.pg_datadir} -U {self.pg_repl_user} -Xs"],
             user=self.pg_user)
 
     def pg_create_user(self, user, super_user=False):

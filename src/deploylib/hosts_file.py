@@ -2,7 +2,7 @@ import re
 from collections import OrderedDict
 from ipaddress import ip_address, IPv4Address, IPv6Address
 
-from deployer_error import DeployerError
+from .deployer_error import DeployerError
 
 
 class CentOsConfigFile(OrderedDict):

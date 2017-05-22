@@ -1,7 +1,7 @@
 from abc import ABCMeta
 import xml.etree.ElementTree as ET
 
-from linux import Linux
+from .linux import Linux
 
 
 class Ha(Linux, metaclass=ABCMeta):
@@ -104,7 +104,7 @@ class Ha(Linux, metaclass=ABCMeta):
     def ha_resource_masters(self, clone_id):
         return self.ha_resource_slaves_masters(clone_id)[1]
 
-    def _pcs_xml(self, what):
+    def ha_pcs_xml(self, what):
         self.ssh_run_check(f"pcs -f {self.ha_cluster_xml_file} {what}")
 
     def ha_drop_vip(self):

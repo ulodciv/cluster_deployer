@@ -12,6 +12,7 @@
   "pgha_resource": "pg",
   "pgha_file": "../pgha/pgha.py",
 
+  "pg_version": "9.6",
   "pg_port": "5432",
   "pg_user": "postgres",
   "pg_repl_user": "repl1",
