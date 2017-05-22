@@ -3,12 +3,10 @@ from abc import abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path, PurePosixPath
-from subprocess import run, PIPE
 from ipaddress import ip_interface, IPv4Interface, IPv4Address
 
 from paramiko import RSAKey
 
-from deployer_error import DeployerError
 from ha import Ha
 from postgres import Postgres
 from vm import Vbox
@@ -60,7 +58,6 @@ class ClusterBase:
 class VboxPgHaCluster(ClusterBase):
 
     def __init__(self, *, cluster_def, **kwargs):
-        # def __init__(self, *, cluster_def, vm_class, use_threads, **kwargs):
         super(VboxPgHaCluster, self).__init__(
             cluster_def=cluster_def, vm_class=VboxPgVm, **kwargs)
         self.master = None
