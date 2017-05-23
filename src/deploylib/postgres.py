@@ -182,6 +182,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_set_param("listen_addresses", "'*'")
         self.pg_set_param("hot_standby", "on")
         self.pg_set_param("hot_standby_feedback", "on")
+        self.pg_set_param("wal_log_hints", "on")
         self.pg_set_param("wal_receiver_timeout", "5000")  # ms
         self.pg_set_param("wal_retrieve_retry_interval", "3000")  # ms
         # for Debian and Ubuntu

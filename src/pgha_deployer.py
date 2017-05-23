@@ -154,10 +154,7 @@ class PghaCluster(ClusterBase):
             f"with master {self.pgha_resource_master} INFINITY")
         master.ha_pcs_xml(
             f"constraint order promote {self.pgha_resource_master} "
-            f"then start {pgha_resource_master_ip} symmetrical=false")
-        master.ha_pcs_xml(
-            f"constraint order demote {self.pgha_resource_master} "
-            f"then stop {pgha_resource_master_ip} symmetrical=false")
+            f"then start {pgha_resource_master_ip}")
         master.ha_cib_push()
 
 

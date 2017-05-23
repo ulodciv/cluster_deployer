@@ -388,6 +388,8 @@ def test_kill_master_pg(cluster_context: ClusterContext):
     assert expect_master_node(cluster, master.name, 30)
     assert expect_pg_isready(master, 30)
     assert expect_node_in_recovery_or_not(False, master, 10)
+    for standby in cluster.standbies:
+        assert expect_standby_is_replicating(cluster.master, standby.name, 30)
     master.pg_execute(
         "update person.addresstype set name='xx' where addresstypeid=1", db=DB)
     select_sql = "select name from person.addresstype where addresstypeid=1"
@@ -401,6 +403,8 @@ def test_kill_master_pg(cluster_context: ClusterContext):
     assert expect_master_node(cluster, master.name, 30)
     assert expect_pg_isready(master, 30)
     assert expect_node_in_recovery_or_not(False, master, 10)
+    for standby in cluster.standbies:
+        assert expect_standby_is_replicating(cluster.master, standby.name, 30)
     master.pg_execute(
         "update person.addresstype set name='yy' where addresstypeid=1", db=DB)
     select_sql = "select name from person.addresstype where addresstypeid=1"
