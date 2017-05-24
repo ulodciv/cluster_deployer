@@ -1,0 +1,37 @@
+{
+  "CentosPg9.6": {
+    "vboxmanage": "",
+    "ova": "../ovas/centos7_6.ova",
+    "cluster_name": "PgCluster",
+    "virtual_ip": "192.168.72.251",
+    "users": [
+      "root",
+      "postgres",
+      "repl1"
+    ],
+    "pgha_resource": "pg",
+    "pgha_file": "../pgha/pgha.py",
+    "pg_version": "9.6",
+    "pg_port": "5432",
+    "pg_user": "postgres",
+    "pg_repl_user": "repl1",
+    "root_password": "root",
+    "key_file": "key/rsa_private.key",
+    "pub_key_file": "key/rsa_pub.key",
+    "demo_db": "demo_db.xz",
+    "hosts": [
+      {
+        "name": "test1",
+        "static_ip": "192.168.72.151"
+      },
+      {
+        "name": "test2",
+        "static_ip": "192.168.72.152"
+      },
+      {
+        "name": "test3",
+        "static_ip": "192.168.72.153"
+      }
+    ]
+  }
+}

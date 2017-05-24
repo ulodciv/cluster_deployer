@@ -198,19 +198,6 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
 
     def pg_backup(self, master: 'Postgres'):
-        """
-        systemctl stop postgresql-9.6
-        mv 9.6/data data_old
-        pg_basebackup -h pg01 -D 9.6/data -U repl1 -v -P --xlog-method=stream
-        postgresql.conf:
-            hot_standby = on
-        recovery.conf:
-            standby_mode = on
-            restore_command = 'rsync -pog pg01:wals_from_this/%f %p'
-            primary_conninfo = 'host=192.168.72.101 port=5432 user=repl1'
-            primary_slot_name = 'node_a'
-        systemctl start postgresql-9.6
-        """
         self.ssh_run_check([
             f"mv {master.pg_datadir} data_old",
             f"pg_basebackup -h {master.name} -p {self.pg_port} "

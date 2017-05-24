@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from itertools import chain
+from pathlib import PurePosixPath
 from time import sleep, time
 import json
 
@@ -60,6 +61,22 @@ def expect_master_node(cluster, expected_master, timeout):
         sleep(1)
 
 
+def expect_any_master_node(cluster, expected_masters, timeout):
+    start_time = time()
+    while True:
+        masters = cluster.master.ha_resource_masters(
+            cluster.pgha_resource_master)
+        matches = set(masters) & set(expected_masters)
+        if matches:
+            print(f"got one or more expected masters in cluster: {matches}")
+            return list(matches)
+        print(f"did not get any expected masters in cluster, "
+              f"expected: {expected_masters}, got {masters}")
+        if time() - start_time > timeout:
+            return []
+        sleep(1)
+
+
 def expect_node_in_recovery_or_not(expect_in_recovery, node, timeout):
     start_time = time()
     while True:
@@ -88,11 +105,12 @@ def expect_pg_isready(node, timeout):
 
 def expect_standby_is_replicating(master, standby_name, timeout):
     start_time = time()
+    slot = standby_name.replace('-', '_')
     while True:
         replicating = master.pg_execute(
             f"SELECT active "
             f"FROM pg_replication_slots "
-            f"WHERE slot_name='{standby_name}'") == [['t']]
+            f"WHERE slot_name='{slot}'") == [['t']]
         if replicating:
             print(f"{standby_name} is replicating with {master.name}")
             return True
@@ -103,12 +121,8 @@ def expect_standby_is_replicating(master, standby_name, timeout):
 
 
 class ClusterContext:
-    with open("config/tests.json") as fh:
-        cluster_json = json.load(fh)
-
-    def __init__(self):
-        self.cluster = PghaCluster(
-            cluster_def=self.cluster_json, use_threads=True)
+    def __init__(self, test_cluster):
+        self.cluster = PghaCluster(cluster_def=test_cluster, use_threads=True)
         cluster = self.cluster
         cluster.deploy()
         expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
@@ -145,9 +159,13 @@ class ClusterContext:
                 cluster.master, standby.name, 30)
 
 
-@pytest.fixture(scope="session")
-def cluster_context():
-    context = ClusterContext()
+with open("tests/tests.json") as fh:
+    clusters_json = json.load(fh)
+
+
+@pytest.fixture(scope="session", params=list(clusters_json.keys()))
+def cluster_context(request):
+    context = ClusterContext(clusters_json[request.param])
     yield context
     # return
     for vm in context.cluster.vms:
@@ -437,3 +455,29 @@ def test_cluster_stop_start(cluster_context: ClusterContext):
         assert expect_query_results(
             partial(standby.pg_execute, select_sql, db=DB), [['ee']], 10)
 
+
+def test_break_pg_on_master(cluster_context: ClusterContext):
+    """ check that
+        - another standby becomes master
+        - broken master is taken offline """
+    cluster_context.setup()
+    cluster = cluster_context.cluster
+    master = cluster.master
+    master.ssh_run_check(f"kill -9 {master.pg_get_server_pid()}")
+    pg_xlog_dir = PurePosixPath(master.pg_datadir) / "pg_xlog"
+    master.ssh_run_check(f"mv {pg_xlog_dir} {pg_xlog_dir}.bak")
+    assert expect_master_node(cluster, None, 30)
+    master.ssh_run_check(
+        f"crm_master -v 10000 -N {cluster.standbies[0].name} "
+        f"-r {cluster.pgha_resource}")
+    masters = expect_any_master_node(
+        cluster, [v.name for v in cluster.standbies], 30)
+    assert len(masters) == 1
+    new_master = [v for v in cluster.standbies if v.name == masters[0]][0]
+    remaining_standbies = [v for v in cluster.standbies if v != new_master]
+    cluster.master = new_master
+    for standby in remaining_standbies:
+        assert expect_standby_is_replicating(cluster.master, standby.name, 30)
+
+
+# http://www.linux-ha.org/doc/dev-guides/_resource_agent_actions.html
