@@ -108,13 +108,35 @@ def expect_standby_is_replicating(master, standby_name, timeout):
     slot = standby_name.replace('-', '_')
     while True:
         replicating = master.pg_execute(
-            f"SELECT active "
-            f"FROM pg_replication_slots "
+            f"SELECT active FROM pg_replication_slots "
             f"WHERE slot_name='{slot}'") == [['t']]
         if replicating:
             print(f"{standby_name} is replicating with {master.name}")
             return True
         print(f"{standby_name} is not replicating with {master.name}")
+        if time() - start_time > timeout:
+            return False
+        sleep(1)
+
+
+def expect_nodes_have_positive_scores(cluster, vms, timeout):
+    start_time = time()
+    while True:
+        ready = []
+        for vm in vms:
+            s = vm.ssh_run_check(
+                f"crm_master -r {cluster.pgha_resource}", get_output=True)
+            if s:
+                # scope=nodes  name=master-pg value=998
+                parts = [p.partition("=") for p in s.split()]
+                d = {p[0]: p[2] for p in parts}
+                if int(d.get("value", "0")) > 0:
+                    ready.append(vm.name)
+        if len(ready) == len(vms):
+            print(f"all nodes {ready} have positive scores ")
+            return True
+        print(f"not all nodes have positive scores: "
+              f"expected {[v.name for v in vms]}, got {ready}")
         if time() - start_time > timeout:
             return False
         sleep(1)
@@ -154,6 +176,7 @@ class ClusterContext:
         cluster.master.ha_unstandby_all()
         expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
         expect_master_node(cluster, cluster.master.name, 25)
+        expect_nodes_have_positive_scores(cluster, cluster.vms, 30)
         for standby in cluster.standbies:
             assert expect_standby_is_replicating(
                 cluster.master, standby.name, 30)
@@ -227,7 +250,8 @@ def test_pcs_standby(cluster_context: ClusterContext):
 def test_trigger_switchover(cluster_context: ClusterContext):
     cluster_context.setup()
     cluster = cluster_context.cluster
-    sleep(5)
+    sleep(5)  # so that we change the score 5s after the last monitor
+              # and 5s before the next monitor
     cluster.master.ssh_run_check(
         f"crm_master -v 10000 -N {cluster.standbies[0].name} "
         f"-r {cluster.pgha_resource}")
@@ -303,8 +327,6 @@ def test_kill_master_machine(cluster_context: ClusterContext):
     if len(cluster.vms) < 3:
         print("This test requires more than two nodes")
         return
-
-    sleep(5)  # WAL receiver timeout
 
     def run_updates_until_error():
         try:
@@ -435,7 +457,6 @@ def test_cluster_stop_start(cluster_context: ClusterContext):
     cluster_context.setup()
     cluster = cluster_context.cluster
     master = cluster.master
-    sleep(5)  # hack
     master.ha_stop_all()
     for vm in cluster.vms:
         with pytest.raises(Exception):
@@ -463,13 +484,11 @@ def test_break_pg_on_master(cluster_context: ClusterContext):
     cluster_context.setup()
     cluster = cluster_context.cluster
     master = cluster.master
+    # sleep(20)  # long enough for scores to be set
     master.ssh_run_check(f"kill -9 {master.pg_get_server_pid()}")
     pg_xlog_dir = PurePosixPath(master.pg_datadir) / "pg_xlog"
     master.ssh_run_check(f"mv {pg_xlog_dir} {pg_xlog_dir}.bak")
     assert expect_master_node(cluster, None, 30)
-    master.ssh_run_check(
-        f"crm_master -v 10000 -N {cluster.standbies[0].name} "
-        f"-r {cluster.pgha_resource}")
     masters = expect_any_master_node(
         cluster, [v.name for v in cluster.standbies], 30)
     assert len(masters) == 1
@@ -478,6 +497,3 @@ def test_break_pg_on_master(cluster_context: ClusterContext):
     cluster.master = new_master
     for standby in remaining_standbies:
         assert expect_standby_is_replicating(cluster.master, standby.name, 30)
-
-
-# http://www.linux-ha.org/doc/dev-guides/_resource_agent_actions.html
