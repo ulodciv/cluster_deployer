@@ -1,7 +1,11 @@
-Easily deploy clusters providing highly available resources. This tool 
-is meant to help deploying clusters quickly and reliably in a replicable manner. 
+## deploy_cluster:
 
-In its current form, it is specialized to deploy clusters with highly-available 
+- easily deploy clusters
+- help automate deploying clusters in a replicable manner
+- test Pacemaker Resource Agents by making it easier to write close-to-real-life
+functional tests
+
+The tool includes classes that deploy clusters with highly-available 
 Postgresql using a [multi-state Pacemaker resource agent](https://github.com/ulodciv/pgha). 
 
 There are some unit tests and
@@ -9,14 +13,17 @@ There are some unit tests and
 but more tests are needed to confirm the RA works properly in most scenarios. 
 This tool makes it easier to write such functional tests.
 
-# Requirements
+### Requirements
 
-- This tool can be run on Linux or Windows
+- Linux or Windows as the VM host
+- Python >= 3.6 with module Paramiko:
+  
+      python -m pip install paramiko
+      
 - VirtualBox
-- Python >= 3.6 with module Paramiko (python -m pip install paramiko)
 - [pgha.py](https://github.com/ulodciv/pgha)
 
-# Usage
+### Usage
 
 1. [Set up a VirtualBox VM](https://docs.google.com/spreadsheets/d/11X_08SDureZ3w_JtihwkJca39ldbIaz9yn7CZgZM9a8/edit?usp=sharing) that has:
     - CentOS/RHEL 7, Debian 9, or Ubuntu Zesty

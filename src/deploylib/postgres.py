@@ -19,7 +19,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_slot = self.name.replace('-', '_')
         self.pg_port = pg_port
         self._pg_service = None
-        self._pg_data_directory = None
+        self._pg_datadir = None
         self._pg_hba_file = None
         self._pg_config_file = None
         self._pg_bindir = None
@@ -102,9 +102,9 @@ class Postgres(Ssh, metaclass=ABCMeta):
 
     @property
     def pg_datadir(self) -> str:
-        if self._pg_data_directory is None:
-            self._pg_data_directory = self.pg_current_setting("data_directory")
-        return self._pg_data_directory
+        if self._pg_datadir is None:
+            self._pg_datadir = self.pg_current_setting("data_directory")
+        return self._pg_datadir
 
     @property
     def pg_config_file(self):
@@ -188,13 +188,13 @@ class Postgres(Ssh, metaclass=ABCMeta):
         # for Debian and Ubuntu
         self.pg_set_param("stats_temp_directory", "pg_stat_tmp")
 
-    def pg_write_recovery_for_pcmk(self, virtual_ip):
+    def pg_write_recovery_for_pcmk(self, master_host):
         repl_user = self.pg_repl_user
         self._pg_add_to_pcmk_recovery_conf("standby_mode", "on")
         self._pg_add_to_pcmk_recovery_conf("recovery_target_timeline", "latest")
         self._pg_add_to_pcmk_recovery_conf(
             "primary_conninfo",
-            f"host={virtual_ip} port={self.pg_port} user={repl_user}")
+            f"host={master_host} port={self.pg_port} user={repl_user}")
         self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
 
     def pg_backup(self, master: 'Postgres'):
@@ -220,8 +220,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
     def pg_restart(self):
         self.ssh_run_check(f"systemctl restart {self.pg_service}")
 
-    def pg_add_replication_slots(self, hosts):
-        for h in hosts:
+    def pg_add_replication_slots(self, standbies):
+        for h in standbies:
             self.pg_execute(
                 f"SELECT * "
-                f"FROM pg_create_physical_replication_slot('{h.pg_slot}')")
+                f"FROM pg_create_physical_replication_slot('{h.pg_slot}', true)")

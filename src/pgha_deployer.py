@@ -93,15 +93,27 @@ class PghaCluster(ClusterBase):
             vm.ssh_run_check(cmds, user=vm.pg_user)
         master.pg_make_master(self.vms)
         master.pg_restart()
-        _ = master.pg_config_file
-        master.pg_add_replication_slots(self.vms)
-        master.pg_write_recovery_for_pcmk(self.virtual_ip)
+        for vm in self.vms:
+            if vm != master:
+                vm._pg_config_file = master.pg_config_file
+        for vm in self.vms:
+            if vm != master:
+                vm._pg_datadir = master.pg_datadir
+        master.pg_add_replication_slots(self.standbies)
         master.add_temp_ipv4_to_iface(self.ha_get_vip_ipv4())
 
     def pgha_setup_slaves(self):
         master = self.master
         self.call([partial(m.pg_backup, master) for m in self.standbies])
-        self.call([partial(m.pgha_standby_setup, master) for m in self.standbies])
+        # self.call([partial(m.pgha_standby_setup, master) for m in self.standbies])
+        for vm in self.vms:
+            if vm == master:
+                vm.pg_write_recovery_for_pcmk("")
+            else:
+                vm.pg_write_recovery_for_pcmk(master.name)
+                vm.ssh_run_check(
+                    f"cp {vm.pg_pcmk_recovery_file} {vm.pg_recovery_file}",
+                    user=vm.pg_user)
         self.call([partial(m.pg_start) for m in self.standbies])
         self.call([partial(m.pg_stop) for m in self.vms])
 

@@ -388,6 +388,8 @@ def test_kill_slave_pg(cluster_context: ClusterContext):
     killed = cluster.standbies[-1]
     other_standbies = cluster.standbies[:-1]
 
+    sleep(5)
+
     # send TERM to server process
     killed.ssh_run_check(f"kill {killed.pg_get_server_pid()}")
     assert not killed.pg_isready()
@@ -486,7 +488,10 @@ def test_break_pg_on_master(cluster_context: ClusterContext):
     master = cluster.master
     # sleep(20)  # long enough for scores to be set
     master.ssh_run_check(f"kill -9 {master.pg_get_server_pid()}")
-    pg_xlog_dir = PurePosixPath(master.pg_datadir) / "pg_xlog"
+    if master.pg_version == "10":
+        pg_xlog_dir = PurePosixPath(master.pg_datadir) / "pg_wal"
+    else:
+        pg_xlog_dir = PurePosixPath(master.pg_datadir) / "pg_xlog"
     master.ssh_run_check(f"mv {pg_xlog_dir} {pg_xlog_dir}.bak")
     assert expect_master_node(cluster, None, 30)
     masters = expect_any_master_node(
