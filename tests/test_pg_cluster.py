@@ -169,17 +169,17 @@ class ClusterContext:
             vm.vm_restore_snapshot("snapshot1")
         sleep(2)
         cluster.master = cluster.vms[0]
+        master = cluster.master
         for vm in cluster.vms:
             vm.vm_start()
         for vm in cluster.vms:
             vm.wait_until_port_is_open(22, 10)
-        cluster.master.ha_unstandby_all()
+        master.ha_unstandby_all()
         expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
-        expect_master_node(cluster, cluster.master.name, 25)
+        expect_master_node(cluster, master.name, 25)
         expect_nodes_have_positive_scores(cluster, cluster.vms, 30)
         for standby in cluster.standbies:
-            assert expect_standby_is_replicating(
-                cluster.master, standby.name, 30)
+            assert expect_standby_is_replicating(master, standby.name, 30)
 
 
 with open("tests/tests.json") as fh:
@@ -356,11 +356,10 @@ def test_kill_master_machine(cluster_context: ClusterContext):
 
     for standby in cluster.standbies:
         standby.vm_start()
-    sleep(15)
+    sleep(8)
     for standby in cluster.standbies:
         standby.wait_until_port_is_open(22, 30)
 
-    # cluster.master = cluster.standbies[0]
     standbies = cluster.standbies
     new_master = standbies[-1]
     killed_master = master
@@ -369,7 +368,7 @@ def test_kill_master_machine(cluster_context: ClusterContext):
 
     for standby in standbies:
         new_master.ha_start(standby)
-    sleep(5)  # HACK: this should not be necessary
+    sleep(3)  # HACK: this should not be necessary
     assert expect_online_nodes(
         cluster, {vm.name for vm in standbies}, 25)
     new_master.ssh_run_check(

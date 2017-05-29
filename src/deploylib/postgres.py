@@ -176,6 +176,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             user=self.pg_user)
 
     def pg_make_master(self, all_hosts):
+        self.pg_set_param("log_min_messages", "DEBUG5")
         self.pg_set_param("wal_level", "replica")
         self.pg_set_param("max_wal_senders", len(all_hosts) + 5)
         self.pg_set_param("max_replication_slots", len(all_hosts) + 5)
@@ -183,8 +184,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_set_param("hot_standby", "on")
         self.pg_set_param("hot_standby_feedback", "on")
         self.pg_set_param("wal_log_hints", "on")
-        self.pg_set_param("wal_receiver_timeout", "5000")  # ms
-        self.pg_set_param("wal_retrieve_retry_interval", "3000")  # ms
+        self.pg_set_param("wal_receiver_timeout", "3000")  # ms
+        self.pg_set_param("wal_retrieve_retry_interval", "500")  # ms
         # for Debian and Ubuntu
         self.pg_set_param("stats_temp_directory", "pg_stat_tmp")
 

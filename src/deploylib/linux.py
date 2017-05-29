@@ -148,7 +148,7 @@ class Linux(VmBase, metaclass=ABCMeta):
                     self.log(
                         f"timed out checking if {self.ip}:{port} is listening")
                     return False
-                sleep(0.1)
+                sleep(0.2)
                 continue
             try:
                 s.close()

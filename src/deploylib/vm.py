@@ -118,14 +118,6 @@ class Vbox(VmBase):
         else:
             self.vboxmanage = self.get_vboxmanage()
 
-    def get_vbox_hostonly_ifs(self):
-        with Vbox.vbox_lock:
-            if Vbox._vbox_hostonly_ifs is None:
-                s = self.run_vboxmanage('list hostonlyifs')
-                Vbox._vbox_hostonly_ifs = re.findall(
-                        self.RE_HOSTONLYIFS, s, re.M)
-        return Vbox._vbox_hostonly_ifs
-
     def get_vboxmanage(self):
         with Vbox.vbox_lock:
             if Vbox._vboxmanage is None:
@@ -167,7 +159,7 @@ class Vbox(VmBase):
             cmd = [self.vboxmanage, *shlex.split(args)]
         else:
             cmd = [self.vboxmanage, *args]
-        self.log(" ".join(cmd))
+        self.log(" ".join(shlex.quote(c) for c in cmd))
         res = run(cmd, stdout=PIPE, stderr=PIPE)
         if res.returncode:
             raise DeployerError(f"error running {cmd}:\n{res.stderr.decode()}")
@@ -220,6 +212,8 @@ class Vbox(VmBase):
         vmdk = self.get_vbox_machine_dir() / name / f"{name}.vmdk"
         self.run_vboxmanage(f'import {self.ova} --vsys 0 --vmname {name} '
                             f'--unit {self.get_disk_unit()} --disk "{vmdk}"')
+        self.run_vboxmanage(f'guestproperty set {name} '
+                            f'"/VirtualBox/GuestAdd/VBoxService/--timesync-interval" 1000')
 
     def vm_poweroff(self):
         return self.run_vboxmanage(f"controlvm {self.name} poweroff")
@@ -239,7 +233,7 @@ class Vbox(VmBase):
             self._del_ip_property()
             hostonlyif = self.get_vbox_hostonly_ifs()[0]
             self.run_vboxmanage(
-                f'modifyvm {name} --hostonlyadapter1 "{hostonlyif}"')
+                f'modifyvm {name} --hostonlyadapter1 "{hostonlyif}" --hpet on')
             self.vm_start()
             self.boot_sleep()
         self._get_ip()
