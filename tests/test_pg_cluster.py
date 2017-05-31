@@ -488,9 +488,9 @@ def test_break_pg_on_master(cluster_context: ClusterContext):
     # sleep(20)  # long enough for scores to be set
     master.ssh_run_check(f"kill -9 {master.pg_get_server_pid()}")
     if master.pg_version == "10":
-        pg_xlog_dir = PurePosixPath(master.pg_datadir) / "pg_wal"
+        pg_xlog_dir = PurePosixPath(master.pg_data_directory) / "pg_wal"
     else:
-        pg_xlog_dir = PurePosixPath(master.pg_datadir) / "pg_xlog"
+        pg_xlog_dir = PurePosixPath(master.pg_data_directory) / "pg_xlog"
     master.ssh_run_check(f"mv {pg_xlog_dir} {pg_xlog_dir}.bak")
     assert expect_master_node(cluster, None, 30)
     masters = expect_any_master_node(
