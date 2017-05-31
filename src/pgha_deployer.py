@@ -93,12 +93,6 @@ class PghaCluster(ClusterBase):
             vm.ssh_run_check(cmds, user=vm.pg_user)
         master.pg_make_master(self.vms)
         master.pg_restart()
-        for vm in self.vms:
-            if vm != master:
-                vm._pg_config_file = master.pg_config_file
-        for vm in self.vms:
-            if vm != master:
-                vm._pg_datadir = master.pg_datadir
         master.pg_add_replication_slots(self.standbies)
         master.add_temp_ipv4_to_iface(self.ha_get_vip_ipv4())
 
@@ -142,7 +136,7 @@ class PghaCluster(ClusterBase):
         master.ha_pcs_xml(
             f'resource create {self.pgha_resource} ocf:heartbeat:pgha '
             f'pgbindir={master.pg_bindir} '
-            f'pgdata={master.pg_datadir} '
+            f'pgdata={master.pg_data_directory} '
             f'pgconf={master.pg_config_file} '
             f'pgport={master.pg_port} '
             f'op start timeout=60s '

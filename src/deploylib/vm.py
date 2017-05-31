@@ -111,7 +111,7 @@ class Vbox(VmBase):
     _vboxmanage = None
     vbox_lock = Lock()
 
-    def __init__(self, *, vboxmanage, **kwargs):
+    def __init__(self, *, vboxmanage="", **kwargs):
         super(Vbox, self).__init__(**kwargs)
         if vboxmanage:
             self.vboxmanage = vboxmanage
@@ -233,7 +233,7 @@ class Vbox(VmBase):
             self._del_ip_property()
             hostonlyif = self.get_vbox_hostonly_ifs()[0]
             self.run_vboxmanage(
-                f'modifyvm {name} --hostonlyadapter1 "{hostonlyif}" --hpet on')
+                f'modifyvm {name} --hostonlyadapter1 "{hostonlyif}" --hpet on --memory 1024')
             self.vm_start()
             self.boot_sleep()
         self._get_ip()
