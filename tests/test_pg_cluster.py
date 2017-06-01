@@ -475,7 +475,7 @@ def test_cluster_stop_start(cluster_context: ClusterContext):
     select_sql = "select name from person.addresstype where addresstypeid=1"
     for standby in cluster.standbies:
         assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['ee']], 10)
+            partial(standby.pg_execute, select_sql, db=DB), [['ee']], 25)
 
 
 def test_break_pg_on_master(cluster_context: ClusterContext):

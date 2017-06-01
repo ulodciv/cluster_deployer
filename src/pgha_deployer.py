@@ -17,19 +17,6 @@ class PghaVm(Vbox, Ha, Postgres):
     def __init__(self, **kwargs):
         super(PghaVm, self).__init__(**kwargs)
 
-    def pgha_standby_setup(self, master):
-        pcmk_recovery_file = master.pg_pcmk_recovery_file
-        self.ssh_run_check(
-            f"sed -i s/{master.name}/{self.name}/ {pcmk_recovery_file}",
-            user=self.pg_user)
-        self.ssh_run_check(
-            f"sed -i s/{master.pg_slot}/{self.pg_slot}/ {pcmk_recovery_file}",
-            user=self.pg_user)
-        self.ssh_run_check(
-            f"cp {master.pg_pcmk_recovery_file} "
-            f"{master.pg_recovery_file}",
-            user=self.pg_user)
-
     def pgha_deploy_db(self, demo_db_file):
         local_db_file = Path(demo_db_file)
         db_file_name = local_db_file.name
@@ -99,7 +86,6 @@ class PghaCluster(ClusterBase):
     def pgha_setup_slaves(self):
         master = self.master
         self.call([partial(m.pg_backup, master) for m in self.standbies])
-        # self.call([partial(m.pgha_standby_setup, master) for m in self.standbies])
         for vm in self.vms:
             if vm == master:
                 vm.pg_write_recovery_for_pcmk("")
