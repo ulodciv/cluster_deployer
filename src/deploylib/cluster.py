@@ -20,7 +20,7 @@ class ClusterBase:
         logging.getLogger().setLevel(logging.DEBUG)
         logging.getLogger("paramiko").setLevel(logging.WARNING)
 
-    def __init__(self, *, cluster_def, vm_class, use_threads, **kwargs):
+    def __init__(self, *, cluster_def, vm_class, use_threads=True, **kwargs):
         super(ClusterBase, self).__init__(**kwargs)
         self.use_threads = use_threads
         self.configure_logging()

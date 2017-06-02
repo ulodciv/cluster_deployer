@@ -106,14 +106,14 @@ class Ssh(Linux, metaclass=ABCMeta):
                     f.write(keys.get_authorized_keys_str())
 
     def authorize_pub_key(self, user_obj):
-        start = f'su - {user_obj.user} bash -c'
+        su = f'su - {user_obj.user} bash -c'
         commands = [
-            f'{start} "mkdir -p .ssh"',
-            f'{start} "touch .ssh/authorized_keys"',
-            f'{start} "chmod 700 .ssh"',
-            f'{start} "chmod 600 .ssh/authorized_keys"']
+            f'{su} "mkdir -p .ssh"',
+            f'{su} "touch .ssh/authorized_keys"',
+            f'{su} "chmod 700 .ssh"',
+            f'{su} "chmod 600 .ssh/authorized_keys"']
         if self.selinux_is_active():
-            commands.append(f'{start} "restorecon -FR .ssh"')
+            commands.append(f'{su} "restorecon -FR .ssh"')
         self.ssh_run_check(commands)
         self.add_authorized_key(user_obj, self.paramiko_pub_key, True)
 
@@ -147,7 +147,7 @@ class Ssh(Linux, metaclass=ABCMeta):
         self.log(f"reading {auth_keys_file}")
         with self.open_sftp("root" if use_root else user) as sftp:
             with sftp.file(str(auth_keys_file)) as f:
-                keys_str = f.read().decode('utf-8')
+                keys_str = f.read().decode()
         keys = AuthorizedKeys(keys_str)
         keys_added = False
         for key_to_add in pub_keys:
