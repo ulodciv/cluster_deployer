@@ -96,7 +96,7 @@ class Ssh(Linux, metaclass=ABCMeta):
                     "root", ssh, f'chmod 600 {auth_keys_file}', check=True)
                 sftp = ssh.open_sftp()
                 with sftp.file(str(auth_keys_file)) as f:
-                    keys_str = f.read().decode('utf-8')
+                    keys_str = f.read().decode()
                 keys = AuthorizedKeys(keys_str)
                 if keys.has_rsa_key(self.paramiko_pub_key):
                     return
@@ -106,14 +106,14 @@ class Ssh(Linux, metaclass=ABCMeta):
                     f.write(keys.get_authorized_keys_str())
 
     def authorize_pub_key(self, user_obj):
-        start = f'su - {user_obj.user} bash -c'
+        su = f'su - {user_obj.user} bash -c'
         commands = [
-            f'{start} "mkdir -p .ssh"',
-            f'{start} "touch .ssh/authorized_keys"',
-            f'{start} "chmod 700 .ssh"',
-            f'{start} "chmod 600 .ssh/authorized_keys"']
+            f'{su} "mkdir -p .ssh"',
+            f'{su} "touch .ssh/authorized_keys"',
+            f'{su} "chmod 700 .ssh"',
+            f'{su} "chmod 600 .ssh/authorized_keys"']
         if self.selinux_is_active():
-            commands.append(f'{start} "restorecon -FR .ssh"')
+            commands.append(f'{su} "restorecon -FR .ssh"')
         self.ssh_run_check(commands)
         self.add_authorized_key(user_obj, self.paramiko_pub_key, True)
 
@@ -147,7 +147,7 @@ class Ssh(Linux, metaclass=ABCMeta):
         self.log(f"reading {auth_keys_file}")
         with self.open_sftp("root" if use_root else user) as sftp:
             with sftp.file(str(auth_keys_file)) as f:
-                keys_str = f.read().decode('utf-8')
+                keys_str = f.read().decode()
         keys = AuthorizedKeys(keys_str)
         keys_added = False
         for key_to_add in pub_keys:
@@ -193,7 +193,7 @@ class Ssh(Linux, metaclass=ABCMeta):
             # grab the id_rsa.pub
             with self.open_sftp(user_obj.user) as sftp:
                 key_bytes = sftp.file(str(id_rsa_pub_file)).read()
-        user_obj.public_ssh_key = key_bytes.decode('utf-8').strip()
+        user_obj.public_ssh_key = key_bytes.decode().strip()
         return user_obj.public_ssh_key
 
     @contextmanager
@@ -271,7 +271,7 @@ class Ssh(Linux, metaclass=ABCMeta):
         with self.open_sftp() as sftp:
             self.log(f"reading {hosts_file}")
             with sftp.file(str(hosts_file)) as f:
-                hosts_str = f.read().decode('utf-8')
+                hosts_str = f.read().decode()
             hosts = HostsFile(hosts_str)
             for vm in vms:
                 if hosts.has_name(vm.name):

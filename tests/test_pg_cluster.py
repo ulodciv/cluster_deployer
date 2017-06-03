@@ -144,7 +144,7 @@ def expect_nodes_have_positive_scores(cluster, vms, timeout):
 
 class ClusterContext:
     def __init__(self, test_cluster):
-        self.cluster = PghaCluster(cluster_def=test_cluster, use_threads=True)
+        self.cluster = PghaCluster(cluster_def=test_cluster)
         cluster = self.cluster
         cluster.deploy()
         expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)
@@ -184,6 +184,7 @@ class ClusterContext:
 
 with open("tests/tests.json") as fh:
     clusters_json = json.load(fh)
+    # del clusters_json["CentosPgSources"]
 
 
 @pytest.fixture(scope="session", params=list(clusters_json.keys()))
@@ -193,12 +194,12 @@ def cluster_context(request):
     # return
     for vm in context.cluster.vms:
         try:
-            print(vm.vm_poweroff())
+            vm.vm_poweroff()
         except Exception as e:
             print(f"exception during power off:\n{e}")
         sleep(2)  # seems like this is necessary...
         try:
-            print(vm.vm_delete())
+            vm.vm_delete()
         except Exception as e:
             print(f"exception during delete:\n{e}")
 

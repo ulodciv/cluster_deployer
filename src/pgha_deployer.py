@@ -29,8 +29,8 @@ class PghaVm(Vbox, Ha, Postgres):
         self.pg_drop_db(db)
         self.pg_create_db(db)
         self.ssh_run_check(
-            f"cd /tmp/{db} && psql -p {self.pg_port} -v ON_ERROR_STOP=1 -t -q "
-            f"-f install.sql {db}",
+            f"cd /tmp/{db} && {self.psql} -p {self.pg_port} -v ON_ERROR_STOP=1 "
+            f"-t -q -f install.sql {db}",
             user=self.pg_user)
         self.ssh_run_check(f'rm -rf /tmp/{db}')
 
@@ -118,6 +118,15 @@ class PghaCluster(ClusterBase):
     def pgha_configure_cib(self):
         master = self.master
         master.ha_get_cib()
+        # pg_host: tcp or unix_socket_directories?
+        if "unix_socket_directories" in master.pg_conf_dict:
+            l = master.pg_conf_dict["unix_socket_directories"].split(",")
+            if len(l) > 0 and l[0]:
+                pg_host = l[0]
+            else:
+                pg_host = "localhost"
+        else:
+            pg_host = "/tmp"
         # pgha
         master.ha_pcs_xml(
             f'resource create {self.pgha_resource} ocf:heartbeat:pgha '
@@ -125,6 +134,7 @@ class PghaCluster(ClusterBase):
             f'pgdata={master.pg_data_directory} '
             f'pgconf={master.pg_config_file} '
             f'pgport={master.pg_port} '
+            f'pghost={pg_host} '
             f'op start timeout=60s '
             f'op stop timeout=60s '
             f'op promote timeout=120s '

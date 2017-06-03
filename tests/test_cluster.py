@@ -2,32 +2,29 @@ import json
 
 import pytest
 
-from cluster import Cluster
+from pgha_deployer import PghaCluster
 
 
 @pytest.fixture
 def cluster():
     with open("config/tests.json") as fh:
         cluster_json = json.load(fh)
-    cluster = Cluster(None, cluster_json)
-    return cluster
+    return PghaCluster(cluster_def=cluster_json)
 
 
 def test_ha_nodes_status(cluster, monkeypatch):
 
     def pcs_status_nodes(*args, **kwargs):
-        return """\
-Pacemaker Nodes:
- Online: centos-pg-1 centos-pg-2
- Standby: centos-pg-3
- Maintenance:   
- Offline:
-Pacemaker Remote Nodes:
- Online:
- Standby:
- Maintenance:
- Offline:
-"""
+        return ("Pacemaker Nodes:\n"
+                " Online: centos-pg-1 centos-pg-2\n"
+                " Standby: centos-pg-3\n"
+                " Maintenance:   \n"
+                " Offline:\n"
+                "Pacemaker Remote Nodes:\n"
+                " Online:\n"
+                " Standby:\n"
+                " Maintenance:\n"
+                " Offline:\n")
 
     cluster.master = cluster.vms[0]
     monkeypatch.setattr(cluster.master, 'ssh_run_check', pcs_status_nodes)
