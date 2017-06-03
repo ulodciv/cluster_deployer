@@ -96,7 +96,7 @@ class Ssh(Linux, metaclass=ABCMeta):
                     "root", ssh, f'chmod 600 {auth_keys_file}', check=True)
                 sftp = ssh.open_sftp()
                 with sftp.file(str(auth_keys_file)) as f:
-                    keys_str = f.read().decode('utf-8')
+                    keys_str = f.read().decode()
                 keys = AuthorizedKeys(keys_str)
                 if keys.has_rsa_key(self.paramiko_pub_key):
                     return
@@ -193,7 +193,7 @@ class Ssh(Linux, metaclass=ABCMeta):
             # grab the id_rsa.pub
             with self.open_sftp(user_obj.user) as sftp:
                 key_bytes = sftp.file(str(id_rsa_pub_file)).read()
-        user_obj.public_ssh_key = key_bytes.decode('utf-8').strip()
+        user_obj.public_ssh_key = key_bytes.decode().strip()
         return user_obj.public_ssh_key
 
     @contextmanager
@@ -271,7 +271,7 @@ class Ssh(Linux, metaclass=ABCMeta):
         with self.open_sftp() as sftp:
             self.log(f"reading {hosts_file}")
             with sftp.file(str(hosts_file)) as f:
-                hosts_str = f.read().decode('utf-8')
+                hosts_str = f.read().decode()
             hosts = HostsFile(hosts_str)
             for vm in vms:
                 if hosts.has_name(vm.name):

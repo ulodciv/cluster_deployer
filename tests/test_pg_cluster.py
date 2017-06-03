@@ -184,6 +184,7 @@ class ClusterContext:
 
 with open("tests/tests.json") as fh:
     clusters_json = json.load(fh)
+    # del clusters_json["CentosPgSources"]
 
 
 @pytest.fixture(scope="session", params=list(clusters_json.keys()))

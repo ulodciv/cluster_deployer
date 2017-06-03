@@ -75,10 +75,11 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_slot = self.name.replace('-', '_')
         self.pg_port = pg_port
         self._pg_service = None
-        self._pg_data_directory = pg_data_directory
+        self._pg_data_directory = PurePosixPath(
+            pg_data_directory) if pg_data_directory else None
         self._pg_hba_file = None
         self._pg_config_file = pg_config_file
-        self._pg_bindir = pg_bindir
+        self._pg_bindir = PurePosixPath(pg_bindir) if pg_bindir else None
         self._pg_start_opts = None
         self._pg_recovery_file = None  # recovery.conf
         self._pg_pcmk_recovery_file = None  # recovery.conf.pcmk
@@ -92,7 +93,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
                 conf_str = sftp.file(self.pg_config_file).read().decode()
             self._pg_conf_dict = PgConfigReader(conf_str)
             # update conf dict with postgresql.auto.conf
-            autoconf_file = PurePosixPath(self.pg_data_directory) / "postgresql.auto.conf"
+            autoconf_file = self.pg_data_directory / "postgresql.auto.conf"
             with self.open_sftp(self.pg_user) as sftp:
                 try:
                     autoconf_str = sftp.file(str(autoconf_file)).read().decode()
@@ -119,7 +120,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
         return self._pg_config_file
 
     @property
-    def pg_data_directory(self) -> str:
+    def pg_data_directory(self) -> PurePosixPath:
         """ data_directory:
         if not provided:
             grab it from postgresql.conf
@@ -128,14 +129,15 @@ class Postgres(Ssh, metaclass=ABCMeta):
         """
         if self._pg_data_directory is None:
             if "data_directory" in self.pg_conf_dict:
-                self._pg_data_directory = self.pg_conf_dict["data_directory"]
+                p = self.pg_conf_dict["data_directory"]
             else:
                 distro = self.distro
                 ver = self.pg_version
                 if distro == Distro.CENTOS:
-                    self._pg_data_directory = f"/var/lib/pgsql/{ver}/data"
+                    p = f"/var/lib/pgsql/{ver}/data"
                 elif distro in (Distro.UBUNTU, Distro.DEBIAN):
-                    self._pg_data_directory = f"/var/lib/postgresql/{ver}/main"
+                    p = f"/var/lib/postgresql/{ver}/main"
+            self._pg_data_directory = PurePosixPath(p)
         return self._pg_data_directory
 
     @property
@@ -149,8 +151,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             if "hba_file" in self.pg_conf_dict:
                 self._pg_hba_file = self.pg_conf_dict["hba_file"]
             else:
-                self._pg_hba_file = str(
-                    PurePosixPath(self.pg_data_directory) / "pg_hba.conf")
+                self._pg_hba_file = str(self.pg_data_directory / "pg_hba.conf")
         return self._pg_hba_file
 
     @property
@@ -174,31 +175,40 @@ class Postgres(Ssh, metaclass=ABCMeta):
         return self._pg_start_opts
 
     @property
-    def pg_bindir(self):
+    def pg_bindir(self) -> PurePosixPath:
         if self._pg_bindir is None:
             distro = self.distro
             if distro == Distro.CENTOS:
-                self._pg_bindir = f"/usr/pgsql-{self.pg_version}/bin"
+                d = f"/usr/pgsql-{self.pg_version}/bin"
             elif distro in (Distro.UBUNTU, Distro.DEBIAN):
-                self._pg_bindir = f"/usr/lib/postgresql/{self.pg_version}/bin"
+                d = f"/usr/lib/postgresql/{self.pg_version}/bin"
+            self._pg_bindir = PurePosixPath(d)
         return self._pg_bindir
 
     @property
     def pg_recovery_file(self):
         if self._pg_recovery_file is None:
-            self._pg_recovery_file = str(
-                PurePosixPath(self.pg_data_directory) / "recovery.conf")
+            self._pg_recovery_file = str(self.pg_data_directory /
+                                         "recovery.conf")
         return self._pg_recovery_file
 
     @property
     def pg_pcmk_recovery_file(self):
         if self._pg_pcmk_recovery_file is None:
-            self._pg_pcmk_recovery_file = str(
-                PurePosixPath(self.pg_data_directory) / "recovery.conf.pcmk")
+            self._pg_pcmk_recovery_file = str(self.pg_data_directory /
+                                              "recovery.conf.pcmk")
         return self._pg_pcmk_recovery_file
 
+    @property
+    def pg_ctl(self) -> PurePosixPath:
+        return self.pg_bindir / "pg_ctl"
+
+    @property
+    def psql(self) -> PurePosixPath:
+        return self.pg_bindir / "psql"
+
     def pg_current_setting2(self, setting) -> str:
-        c = (f'psql -p {self.pg_port} -t '
+        c = (f'{self.psql} -p {self.pg_port} -t '
              f'-c "select current_setting(\'{setting}\');"')
         o = self.ssh_run_check(c, user=self.pg_user, get_output=True)
         return o.strip()
@@ -240,7 +250,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
     def pg_execute(self, sql, *, db="postgres"):
         rs, rs_bash = chr(30), r'\036'  # record separator
         fs, fs_bash = chr(3), r'\003'  # end of text
-        cmd = ["psql", "-p", self.pg_port, "-d", db, "-v", "ON_ERROR_STOP=1",
+        cmd = [str(self.psql), "-p", self.pg_port, "-d", db, "-v",
+               "ON_ERROR_STOP=1",
                "-qXAt", "-R", rs_bash, "-F", fs_bash, "-c", f'"{sql};"']
         o = self.ssh_run_check(
             " ".join(cmd), user=self.pg_user, get_output=True)
@@ -253,7 +264,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             return res
 
     def pg_isready(self):
-        exe = str(PurePosixPath(self.pg_bindir) / "pg_isready")
+        exe = self.pg_bindir / "pg_isready"
         try:
             self.ssh_run_check(f"{exe} -p {self.pg_port}", user=self.pg_user)
             return True
@@ -261,7 +272,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
             return False
 
     def pg_get_server_pid(self):
-        pid_file = PurePosixPath(self.pg_data_directory) / "postmaster.pid"
+        pid_file = self.pg_data_directory / "postmaster.pid"
         with self.open_sftp(self.pg_user) as sftp:
             s = sftp.file(str(pid_file)).read()
         if not s:
@@ -269,18 +280,22 @@ class Postgres(Ssh, metaclass=ABCMeta):
         return s.splitlines()[0].strip().decode()
 
     def pg_create_db(self, db: str):
-        self.ssh_run_check(f"createdb -p {self.pg_port} {db}",
-                           user=self.pg_user)
+        createdb = self.pg_bindir / "createdb"
+        self.ssh_run_check(
+            f"{createdb} -p {self.pg_port} {db}", user=self.pg_user)
 
     def pg_drop_db(self, db: str):
-        self.ssh_run(f"dropdb -p {self.pg_port} {db}", user=self.pg_user)
+        dropdb = self.pg_bindir / "createuser"
+        self.ssh_run(f"{dropdb} -p {self.pg_port} {db}", user=self.pg_user)
 
     def pg_create_replication_user(self):
+        createuser = self.pg_bindir / "createuser"
         self.ssh_run_check(
-            f'createuser -p {self.pg_port} {self.pg_repl_user} --replication',
+            f"{createuser} -p {self.pg_port} {self.pg_repl_user} --replication",
             user=self.pg_user)
 
     def pg_make_master(self, all_hosts):
+        self.pg_set_param("logging_collector", "on")
         self.pg_set_param("log_min_messages", "DEBUG5")
         self.pg_set_param("wal_level", "replica")
         self.pg_set_param("max_wal_senders", len(all_hosts) + 5)
@@ -304,9 +319,10 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
 
     def pg_backup(self, master: 'Postgres'):
+        pg_basebackup = self.pg_bindir / "pg_basebackup"
         self.ssh_run_check([
             f"mv {master.pg_data_directory} data_old",
-            f"pg_basebackup -h {master.name} -p {self.pg_port} "
+            f"{pg_basebackup} -h {master.name} -p {self.pg_port} "
             f"-D {master.pg_data_directory} -U {self.pg_repl_user} -Xs"],
             user=self.pg_user)
 
@@ -316,10 +332,6 @@ class Postgres(Ssh, metaclass=ABCMeta):
 
     def pg_drop_user(self, user):
         self.pg_execute(f"DROP USER {user}")
-
-    @property
-    def pg_ctl(self):
-        return str(PurePosixPath(self.pg_bindir) / "pg_ctl")
 
     def pg_stop(self):
         self.ssh_run_check(
