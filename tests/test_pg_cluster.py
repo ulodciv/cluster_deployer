@@ -184,7 +184,8 @@ class ClusterContext:
 
 with open("tests/tests.json") as fh:
     clusters_json = json.load(fh)
-    # del clusters_json["CentosPgSources"]
+    # del clusters_json["CentosPg9_6"]
+    # del clusters_json["CentosPg10"]
 
 
 @pytest.fixture(scope="session", params=list(clusters_json.keys()))
@@ -455,7 +456,8 @@ def test_kill_master_pg(cluster_context: ClusterContext):
             partial(standby.pg_execute, select_sql, db=DB), [['yy']], 10)
 
 
-def test_cluster_stop_start(cluster_context: ClusterContext):
+@pytest.mark.parametrize('execution_number', range(1))
+def test_cluster_stop_start(cluster_context: ClusterContext, execution_number):
     cluster_context.setup()
     cluster = cluster_context.cluster
     master = cluster.master
@@ -476,7 +478,7 @@ def test_cluster_stop_start(cluster_context: ClusterContext):
     select_sql = "select name from person.addresstype where addresstypeid=1"
     for standby in cluster.standbies:
         assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['ee']], 25)
+            partial(standby.pg_execute, select_sql, db=DB), [['ee']], 7)
 
 
 def test_break_pg_on_master(cluster_context: ClusterContext):

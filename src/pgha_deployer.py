@@ -88,12 +88,9 @@ class PghaCluster(ClusterBase):
         self.call([partial(m.pg_backup, master) for m in self.standbies])
         for vm in self.vms:
             if vm == master:
-                vm.pg_write_recovery_for_pcmk("")
+                vm.pg_write_recovery_conf()
             else:
-                vm.pg_write_recovery_for_pcmk(master.name)
-                vm.ssh_run_check(
-                    f"cp {vm.pg_pcmk_recovery_file} {vm.pg_recovery_file}",
-                    user=vm.pg_user)
+                vm.pg_write_recovery_conf(master.name)
         self.call([partial(m.pg_start) for m in self.standbies])
         self.call([partial(m.pg_stop) for m in self.vms])
 

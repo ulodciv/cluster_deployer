@@ -5,8 +5,7 @@
   "virtual_ip": "192.168.72.201",
   "users": [
     "root",
-    "postgres",
-    "repl1"
+    "postgres"
   ],
 
   "pgha_resource": "pg",
@@ -15,7 +14,6 @@
   "pg_version": "9.6",
   "pg_port": "5432",
   "pg_user": "postgres",
-  "pg_repl_user": "repl1",
   "root_password": "root",
   "key_file": "key/rsa_private.key",
   "pub_key_file": "key/rsa_pub.key",

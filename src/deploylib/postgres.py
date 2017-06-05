@@ -63,7 +63,7 @@ class Postgres(Ssh, metaclass=ABCMeta):
                  pg_version,
                  pg_port="5432",
                  pg_user="postgres",
-                 pg_repl_user,
+                 pg_repl_user="postgres",
                  pg_config_file=None,
                  pg_data_directory=None,
                  pg_bindir=None,
@@ -193,13 +193,6 @@ class Postgres(Ssh, metaclass=ABCMeta):
         return self._pg_recovery_file
 
     @property
-    def pg_pcmk_recovery_file(self):
-        if self._pg_pcmk_recovery_file is None:
-            self._pg_pcmk_recovery_file = str(self.pg_data_directory /
-                                              "recovery.conf.pcmk")
-        return self._pg_pcmk_recovery_file
-
-    @property
     def pg_ctl(self) -> PurePosixPath:
         return self.pg_bindir / "pg_ctl"
 
@@ -244,9 +237,6 @@ class Postgres(Ssh, metaclass=ABCMeta):
     def _pg_add_to_recovery_conf(self, param, val):
         self._pg_add_to_conf(param, val, self.pg_recovery_file)
 
-    def _pg_add_to_pcmk_recovery_conf(self, param, val):
-        self._pg_add_to_conf(param, val, self.pg_pcmk_recovery_file)
-
     def pg_execute(self, sql, *, db="postgres"):
         rs, rs_bash = chr(30), r'\036'  # record separator
         fs, fs_bash = chr(3), r'\003'  # end of text
@@ -290,12 +280,13 @@ class Postgres(Ssh, metaclass=ABCMeta):
 
     def pg_create_replication_user(self):
         createuser = self.pg_bindir / "createuser"
-        self.ssh_run_check(
+        self.ssh_run(
             f"{createuser} -p {self.pg_port} {self.pg_repl_user} --replication",
             user=self.pg_user)
 
     def pg_make_master(self, all_hosts):
         self.pg_set_param("logging_collector", "on")
+        self.pg_set_param("log_line_prefix", "'%m:[%p]:'")
         self.pg_set_param("log_min_messages", "DEBUG5")
         self.pg_set_param("wal_level", "replica")
         self.pg_set_param("max_wal_senders", len(all_hosts) + 5)
@@ -309,14 +300,16 @@ class Postgres(Ssh, metaclass=ABCMeta):
         # for Debian and Ubuntu
         self.pg_set_param("stats_temp_directory", "pg_stat_tmp")
 
-    def pg_write_recovery_for_pcmk(self, master_host):
+    def pg_write_recovery_conf(self, master_host=None):
         repl_user = self.pg_repl_user
-        self._pg_add_to_pcmk_recovery_conf("standby_mode", "on")
-        self._pg_add_to_pcmk_recovery_conf("recovery_target_timeline", "latest")
-        self._pg_add_to_pcmk_recovery_conf(
+        self._pg_add_to_recovery_conf("standby_mode", "on")
+        self._pg_add_to_recovery_conf("recovery_target_timeline", "latest")
+        if not master_host:
+            return
+        self._pg_add_to_recovery_conf(
             "primary_conninfo",
             f"host={master_host} port={self.pg_port} user={repl_user}")
-        self._pg_add_to_pcmk_recovery_conf("primary_slot_name", self.pg_slot)
+        self._pg_add_to_recovery_conf("primary_slot_name", self.pg_slot)
 
     def pg_backup(self, master: 'Postgres'):
         pg_basebackup = self.pg_bindir / "pg_basebackup"

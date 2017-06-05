@@ -2,106 +2,105 @@
   "CentosPgSources":
   {
   "ova": "../ovas/centos7_pg96_sources_1.ova",
-  "cluster_name": "PgCluster",
-  "virtual_ip": "192.168.72.202",
+  "cluster_name": "cluster1",
+  "virtual_ip": "192.168.72.139",
   "users": [
     "root",
-    "postgres",
-    "repl1"
+    "postgres"
   ],
   "pgha_resource": "pg",
   "pgha_file": "../pgha/pgha.py",
   "pg_bindir": "/usr/local/pgsql/bin",
   "pg_data_directory": "/usr/local/pgsql/data",
+  "pg_config_file": "/usr/local/pgsql/data/postgresql.conf",
   "pg_version": "9.6",
   "pg_user": "postgres",
-  "pg_repl_user": "repl1",
   "root_password": "root",
   "key_file": "key/rsa_private.key",
   "pub_key_file": "key/rsa_pub.key",
   "demo_db": "demo_db.xz",
   "hosts": [
     {
-      "name": "sources1",
-      "static_ip": "192.168.72.161"
+      "name": "sources96-1",
+      "static_ip": "192.168.72.131"
     },
     {
-      "name": "sources2",
-      "static_ip": "192.168.72.162"
+      "name": "sources96-2",
+      "static_ip": "192.168.72.132"
     },
     {
-      "name": "sources3",
-      "static_ip": "192.168.72.163"
+      "name": "sources96-3",
+      "static_ip": "192.168.72.133"
     }
   ]
 },
   "CentosPg9_6": {
     "vboxmanage": "",
     "ova": "../ovas/centos7_pg96_1.ova",
-    "cluster_name": "PgCluster",
-    "virtual_ip": "192.168.72.251",
+    "cluster_name": "cluster2",
+    "virtual_ip": "192.168.72.149",
     "users": [
       "root",
-      "postgres",
-      "repl1"
+      "postgres"
     ],
     "pgha_resource": "pg",
     "pgha_file": "../pgha/pgha.py",
     "pg_version": "9.6",
     "pg_port": "5432",
     "pg_user": "postgres",
-    "pg_repl_user": "repl1",
     "root_password": "root",
     "key_file": "key/rsa_private.key",
     "pub_key_file": "key/rsa_pub.key",
     "demo_db": "demo_db.xz",
     "hosts": [
       {
-        "name": "test1",
-        "static_ip": "192.168.72.151"
+        "name": "pg9-1",
+        "static_ip": "192.168.72.141"
       },
       {
-        "name": "test2",
-        "static_ip": "192.168.72.152"
+        "name": "pg9-2",
+        "static_ip": "192.168.72.142"
       },
       {
-        "name": "test3",
-        "static_ip": "192.168.72.153"
+        "name": "pg9-3",
+        "static_ip": "192.168.72.143"
+      },
+      {
+        "name": "pg9-4",
+        "static_ip": "192.168.72.144"
       }
     ]
   },
   "CentosPg10": {
     "vboxmanage": "",
     "ova": "../ovas/centos7_pg10_1.ova",
-    "cluster_name": "PgCluster",
-    "virtual_ip": "192.168.72.241",
+    "cluster_name": "cluster3",
+    "virtual_ip": "192.168.72.159",
     "users": [
       "root",
-      "postgres",
-      "repl1"
+      "postgres"
     ],
     "pgha_resource": "pg",
     "pgha_file": "../pgha/pgha.py",
     "pg_version": "10",
     "pg_port": "5432",
     "pg_user": "postgres",
-    "pg_repl_user": "repl1",
     "root_password": "root",
     "key_file": "key/rsa_private.key",
     "pub_key_file": "key/rsa_pub.key",
     "demo_db": "demo_db.xz",
     "hosts": [
       {
-        "name": "test4",
-        "static_ip": "192.168.72.141"
+        "name": "pg10-1",
+        "static_ip": "192.168.72.151"
       },
       {
-        "name": "test5",
-        "static_ip": "192.168.72.142"
+        "name": "pg10-2",
+        "static_ip": "192.168.72.152"
       },
       {
-        "name": "test6",
-        "static_ip": "192.168.72.143"
+        "name": "pg10-3",
+        "static_ip": "192.168.72.153"
       }
     ]
   }
