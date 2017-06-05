@@ -1,9 +1,9 @@
 ## deploy_cluster:
 
-- easily deploy clusters
-- help automate deploying clusters in a replicable manner
-- test Pacemaker Resource Agents by making it easier to write close-to-real-life
-functional tests
+- easily deploy corosync/pacemaker clusters
+- automate deploying clusters in a replicable manner
+- funcionally test Pacemaker Resource Agents by making it easier to write 
+close-to-real-life tests
 
 The tool includes classes that deploy clusters with highly-available 
 Postgresql using a [multi-state Pacemaker resource agent](https://github.com/ulodciv/pgha). 
