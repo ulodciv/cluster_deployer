@@ -1,4 +1,3 @@
-from abc import ABCMeta
 from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import PurePosixPath
@@ -8,7 +7,6 @@ from paramiko import (
     SSHClient, AutoAddPolicy, SSHException, AuthenticationException, SFTPClient)
 
 from .deployer_error import DeployerError
-from .hosts_file import HostsFile
 from .linux import Linux
 
 
@@ -69,7 +67,7 @@ class AuthorizedKeys:
         return "".join(key.get_as_line() + "\n" for key in self.keys.values())
 
 
-class Ssh(Linux, metaclass=ABCMeta):
+class Ssh(Linux):
     ssh_lock = RLock()
 
     def __init__(self, paramiko_key, paramiko_pub_key, **kwargs):
@@ -265,21 +263,3 @@ class Ssh(Linux, metaclass=ABCMeta):
                       user="root", get_output=False):
         return self.ssh_run(command_or_commands,
                             user=user, check=True, get_output=get_output)
-
-    def add_hosts_to_etc_hosts(self, vms):
-        hosts_file = PurePosixPath("/etc/hosts")
-        with self.open_sftp() as sftp:
-            self.log(f"reading {hosts_file}")
-            with sftp.file(str(hosts_file)) as f:
-                hosts_str = f.read().decode()
-            hosts = HostsFile(hosts_str)
-            for vm in vms:
-                if hosts.has_name(vm.name):
-                    hosts.remove_name(vm.name)
-                hosts.add_or_update(vm.static_ip, vm.name)
-            if str(hosts) == hosts_str:
-                self.log(f"{hosts_file} is up to date")
-                return
-            with sftp.file(str(hosts_file), "w") as f:
-                self.log(f"writing {hosts_file}:\n{hosts}")
-                f.write(str(hosts))

@@ -1,10 +1,9 @@
-from abc import ABCMeta
 import xml.etree.ElementTree as ET
 
-from .linux import Linux
+from deploylib.ssh import Ssh
 
 
-class Ha(Linux, metaclass=ABCMeta):
+class Ha(Ssh):
     ha_cluster_xml_file = f"cluster.xml"
 
     def __init__(self, *, cluster_name, **kwargs):

@@ -21,7 +21,6 @@ class ClusterBase:
         logging.getLogger("paramiko").setLevel(logging.WARNING)
 
     def __init__(self, *, cluster_def, vm_class, use_threads=True, **kwargs):
-        super(ClusterBase, self).__init__(**kwargs)
         self.use_threads = use_threads
         self.configure_logging()
         common = {k: v for k, v in cluster_def.items() if k != "hosts"}
@@ -50,6 +49,8 @@ class ClusterBase:
 
     def deploy_base(self):
         """ can be re-run """
-        self.call([partial(v.deploy, self.vms) for v in self.vms])
+        self.call([partial(v.vm_deploy, self.vms) for v in self.vms])
+        self.call([partial(v.vm_start_and_get_ip, self.vms) for v in self.vms])
+        self.call([partial(v.os_setup, self.vms) for v in self.vms])
         self.call([partial(v.authorize_keys, self.vms) for v in self.vms])
         self.call([partial(v.add_fingerprints, self.vms) for v in self.vms])

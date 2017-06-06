@@ -1,5 +1,4 @@
 import re
-from abc import ABCMeta
 from collections import OrderedDict
 from pathlib import PurePosixPath
 from threading import Lock
@@ -40,23 +39,7 @@ class PgConfigReader(OrderedDict):
         self[k] = val1.strip("'") if val1 else val2
 
 
-class Postgres(Ssh, metaclass=ABCMeta):
-    """
-    config_file (postgresql.conf):
-        if not provided:
-            go with distro defaults
-
-    data_directory:
-        if not provided:
-            grab it from postgresql.conf
-            if not there
-                go with distro defaults
-
-    hba_file:
-        grab it from postgresql.conf
-        if not there
-            go with data_directory/pg_hba.conf
-    """
+class Postgres(Ssh):
     pg_lock = Lock()
 
     def __init__(self, *,
@@ -109,12 +92,11 @@ class Postgres(Ssh, metaclass=ABCMeta):
             go with distro defaults
         """
         if self._pg_config_file is None:
-            distro = self.distro
             ver = self.pg_version
-            if distro == Distro.CENTOS:
+            if self.distro == Distro.CENTOS:
                 self._pg_config_file = (
                     f"/var/lib/pgsql/{ver}/data/postgresql.conf")
-            elif distro in (Distro.UBUNTU, Distro.DEBIAN):
+            elif self.distro in (Distro.UBUNTU, Distro.DEBIAN):
                 self._pg_config_file = (
                     f"/etc/postgresql/{ver}/main/postgresql.conf")
         return self._pg_config_file
@@ -131,11 +113,10 @@ class Postgres(Ssh, metaclass=ABCMeta):
             if "data_directory" in self.pg_conf_dict:
                 p = self.pg_conf_dict["data_directory"]
             else:
-                distro = self.distro
                 ver = self.pg_version
-                if distro == Distro.CENTOS:
+                if self.distro == Distro.CENTOS:
                     p = f"/var/lib/pgsql/{ver}/data"
-                elif distro in (Distro.UBUNTU, Distro.DEBIAN):
+                elif self.distro in (Distro.UBUNTU, Distro.DEBIAN):
                     p = f"/var/lib/postgresql/{ver}/main"
             self._pg_data_directory = PurePosixPath(p)
         return self._pg_data_directory
@@ -157,30 +138,27 @@ class Postgres(Ssh, metaclass=ABCMeta):
     @property
     def pg_service(self):
         if self._pg_service is None:
-            distro = self.distro
-            if distro == Distro.CENTOS:
+            if self.distro == Distro.CENTOS:
                 self._pg_service = f"postgresql-{self.pg_version}"
-            elif distro in (Distro.UBUNTU, Distro.DEBIAN):
+            elif self.distro in (Distro.UBUNTU, Distro.DEBIAN):
                 self._pg_service = f"postgresql"
         return self._pg_service
 
     @property
     def pg_start_opts(self):
         if self._pg_start_opts is None:
-            distro = self.distro
-            if distro == Distro.CENTOS:
+            if self.distro == Distro.CENTOS:
                 self._pg_start_opts = ""
-            elif distro in (Distro.UBUNTU, Distro.DEBIAN):
+            elif self.distro in (Distro.UBUNTU, Distro.DEBIAN):
                 self._pg_start_opts = f"-c config_file={self.pg_config_file}"
         return self._pg_start_opts
 
     @property
     def pg_bindir(self) -> PurePosixPath:
         if self._pg_bindir is None:
-            distro = self.distro
-            if distro == Distro.CENTOS:
+            if self.distro == Distro.CENTOS:
                 d = f"/usr/pgsql-{self.pg_version}/bin"
-            elif distro in (Distro.UBUNTU, Distro.DEBIAN):
+            elif self.distro in (Distro.UBUNTU, Distro.DEBIAN):
                 d = f"/usr/lib/postgresql/{self.pg_version}/bin"
             self._pg_bindir = PurePosixPath(d)
         return self._pg_bindir
@@ -298,7 +276,8 @@ class Postgres(Ssh, metaclass=ABCMeta):
         self.pg_set_param("wal_receiver_timeout", "3000")  # ms
         self.pg_set_param("wal_retrieve_retry_interval", "500")  # ms
         # for Debian and Ubuntu
-        self.pg_set_param("stats_temp_directory", "pg_stat_tmp")
+        if self.distro in (Distro.UBUNTU, Distro.DEBIAN):
+            self.pg_set_param("stats_temp_directory", "pg_stat_tmp")
 
     def pg_write_recovery_conf(self, master_host=None):
         repl_user = self.pg_repl_user
@@ -344,6 +323,5 @@ class Postgres(Ssh, metaclass=ABCMeta):
 
     def pg_add_replication_slots(self, standbies):
         for h in standbies:
-            self.pg_execute(
-                f"SELECT * "
-                f"FROM pg_create_physical_replication_slot('{h.pg_slot}', true)")
+            self.pg_execute(f"SELECT pg_create_physical_replication_slot("
+                            f"'{h.pg_slot}', true)")

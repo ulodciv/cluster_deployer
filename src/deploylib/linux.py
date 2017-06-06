@@ -1,14 +1,15 @@
 import re
 import socket
-from abc import ABCMeta, abstractmethod
+from abc import abstractmethod, ABC
 from collections import OrderedDict
 from contextlib import contextmanager
 from enum import Enum, auto
 from ipaddress import IPv4Interface
+from pathlib import PurePosixPath
 from time import sleep, time
 
 from .deployer_error import DeployerError
-from .hosts_file import CentOsConfigFile
+from .hosts_file import CentOsConfigFile, HostsFile
 from .vm import VmBase
 
 
@@ -26,7 +27,7 @@ class LinuxUser:
         self.public_ssh_key = None
 
 
-class Linux(VmBase, metaclass=ABCMeta):
+class Linux(VmBase):
 
     def __init__(self, *, static_ip, root_password, users, **kwargs):
         super(Linux, self).__init__(**kwargs)
@@ -56,8 +57,8 @@ class Linux(VmBase, metaclass=ABCMeta):
     def _ssh_run(self, user, ssh, command, *, check=False, get_output=True):
         pass
 
-    @abstractmethod
     @contextmanager
+    @abstractmethod
     def open_sftp(self, user="root"):
         pass
 
@@ -66,13 +67,13 @@ class Linux(VmBase, metaclass=ABCMeta):
                       user="root", get_output=False):
         pass
 
-    @abstractmethod
     @contextmanager
+    @abstractmethod
     def ssh_root_with_password(self):
         pass
 
-    @abstractmethod
     @contextmanager
+    @abstractmethod
     def open_ssh(self, user="root"):
         pass
 
@@ -92,6 +93,31 @@ class Linux(VmBase, metaclass=ABCMeta):
             p = re.compile(r'^ID="?(?P<distro>\w+)"?', re.M)
             self._distro = Distro[p.findall(s)[0].upper()]
         return self._distro
+
+    def os_setup(self, vms):
+        self.wait_until_port_is_open(22, 10)
+        self.setup_users()
+        self.set_hostname()
+        self.set_static_ip()
+        self.add_hosts_to_etc_hosts(vms)
+
+    def add_hosts_to_etc_hosts(self, vms):
+        hosts_file = PurePosixPath("/etc/hosts")
+        with self.open_sftp() as sftp:
+            self.log(f"reading {hosts_file}")
+            with sftp.file(str(hosts_file)) as f:
+                hosts_str = f.read().decode()
+            hosts = HostsFile(hosts_str)
+            for vm in vms:
+                if hosts.has_name(vm.name):
+                    hosts.remove_name(vm.name)
+                hosts.add_or_update(vm.static_ip, vm.name)
+            if str(hosts) == hosts_str:
+                self.log(f"{hosts_file} is up to date")
+                return
+            with sftp.file(str(hosts_file), "w") as f:
+                self.log(f"writing {hosts_file}:\n{hosts}")
+                f.write(str(hosts))
 
     def reboot(self):
         self.ssh_run("systemctl reboot")

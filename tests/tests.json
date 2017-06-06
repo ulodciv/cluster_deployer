@@ -1,5 +1,5 @@
 {
-  "CentosPgSources":
+  "cluster1":
   {
   "ova": "../ovas/centos7_pg96_sources_1.ova",
   "cluster_name": "cluster1",
@@ -34,7 +34,7 @@
     }
   ]
 },
-  "CentosPg9_6": {
+  "cluster2": {
     "vboxmanage": "",
     "ova": "../ovas/centos7_pg96_1.ova",
     "cluster_name": "cluster2",
@@ -68,10 +68,14 @@
       {
         "name": "pg9-4",
         "static_ip": "192.168.72.144"
+      },
+      {
+        "name": "pg9-5",
+        "static_ip": "192.168.72.145"
       }
     ]
   },
-  "CentosPg10": {
+  "cluster3": {
     "vboxmanage": "",
     "ova": "../ovas/centos7_pg10_1.ova",
     "cluster_name": "cluster3",

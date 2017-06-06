@@ -13,7 +13,7 @@ from deploylib.postgres import Postgres
 from deploylib.vm import Vbox
 
 
-class PghaVm(Vbox, Ha, Postgres):
+class PghaVm(Ha, Postgres, Vbox):
     def __init__(self, **kwargs):
         super(PghaVm, self).__init__(**kwargs)
 

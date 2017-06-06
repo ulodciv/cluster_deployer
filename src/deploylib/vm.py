@@ -3,7 +3,7 @@ import re
 import platform
 import shlex
 from subprocess import run, PIPE
-from abc import abstractmethod, ABCMeta
+from abc import abstractmethod, ABC
 from pathlib import Path
 from threading import Lock
 from time import sleep
@@ -11,7 +11,7 @@ from time import sleep
 from .deployer_error import DeployerError
 
 
-class VmBase(metaclass=ABCMeta):
+class VmBase(ABC):
     def __init__(self, *, ova, name, **kwargs):
         super(VmBase, self).__init__()
         self.name = name
@@ -23,7 +23,7 @@ class VmBase(metaclass=ABCMeta):
         self.logger.debug(msg)
 
     @abstractmethod
-    def vm_deploy(self, fail_if_exists=True):
+    def vm_deploy(self, fail_if_exists=False):
         pass
 
     @abstractmethod
@@ -51,51 +51,13 @@ class VmBase(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def vm_start_and_get_ip(self, fail_if_already_running=True):
+    def vm_start_and_get_ip(self, fail_if_already_running=False):
         pass
 
     def boot_sleep(self, seconds=10):
         self.log(f"sleeping {seconds} seconds...")
         sleep(seconds)
         self.log("done sleeping")
-
-    def deploy(self, vms):
-        self.vm_deploy(False)
-        self.vm_start_and_get_ip(False)
-        self.wait_until_port_is_open(22, 10)
-        self.setup_users()
-        self.set_hostname()
-        self.set_static_ip()
-        self.add_hosts_to_etc_hosts(vms)
-
-
-class VmWare(VmBase):
-    def __init__(self, **kwargs):
-        super(VmWare, self).__init__(**kwargs)
-
-    def vm_deploy(self, fail_if_exists=True):
-        pass
-
-    def vm_pause(self):
-        pass
-
-    def vm_take_snapshot(self, snapshot_name):
-        pass
-
-    def vm_restore_snapshot(self, snapshot_name):
-        pass
-
-    def vm_start_and_get_ip(self, fail_if_already_running=True):
-        pass
-
-    def vm_start(self):
-        pass
-
-    def vm_poweroff(self):
-        pass
-
-    def vm_delete(self):
-        pass
 
 
 class Vbox(VmBase):
@@ -203,7 +165,7 @@ class Vbox(VmBase):
                 Vbox._vbox_machine_dir = Path(p.findall(s)[0].strip())
         return Vbox._vbox_machine_dir
 
-    def vm_deploy(self, fail_if_exists=True):
+    def vm_deploy(self, fail_if_exists=False):
         name = self.name
         if name in self.get_existing_vms():
             if not fail_if_exists:
@@ -212,8 +174,9 @@ class Vbox(VmBase):
         vmdk = self.get_vbox_machine_dir() / name / f"{name}.vmdk"
         self.run_vboxmanage(f'import {self.ova} --vsys 0 --vmname {name} '
                             f'--unit {self.get_disk_unit()} --disk "{vmdk}"')
-        self.run_vboxmanage(f'guestproperty set {name} '
-                            f'"/VirtualBox/GuestAdd/VBoxService/--timesync-interval" 1000')
+        self.run_vboxmanage(
+            f'guestproperty set {name} '
+            f'"/VirtualBox/GuestAdd/VBoxService/--timesync-interval" 1000')
 
     def vm_poweroff(self):
         return self.run_vboxmanage(f"controlvm {self.name} poweroff")
@@ -224,7 +187,7 @@ class Vbox(VmBase):
     def _del_ip_property(self):
         self.run_vboxmanage(f'guestproperty delete {self.name} {self.IP_PROP}')
 
-    def vm_start_and_get_ip(self, fail_if_already_running=True):
+    def vm_start_and_get_ip(self, fail_if_already_running=False):
         name = self.name
         already_running = name in self.get_running_vms()
         if already_running and fail_if_already_running:
@@ -233,7 +196,8 @@ class Vbox(VmBase):
             self._del_ip_property()
             hostonlyif = self.get_vbox_hostonly_ifs()[0]
             self.run_vboxmanage(
-                f'modifyvm {name} --hostonlyadapter1 "{hostonlyif}" --hpet on --memory 1024')
+                f'modifyvm {name} --hostonlyadapter1 "{hostonlyif}" '
+                f'--hpet on --memory 1024')
             self.vm_start()
             self.boot_sleep()
         self._get_ip()
@@ -257,3 +221,32 @@ class Vbox(VmBase):
         raise DeployerError(
             f"failed to get ip of vm {self.name} after trying {tries} "
             f"with {sleep_secs}s between each attempt")
+
+
+class VmWare(VmBase):
+    def __init__(self, **kwargs):
+        super(VmWare, self).__init__(**kwargs)
+
+    def vm_deploy(self, fail_if_exists=True):
+        pass
+
+    def vm_pause(self):
+        pass
+
+    def vm_take_snapshot(self, snapshot_name):
+        pass
+
+    def vm_restore_snapshot(self, snapshot_name):
+        pass
+
+    def vm_start_and_get_ip(self, fail_if_already_running=True):
+        pass
+
+    def vm_start(self):
+        pass
+
+    def vm_poweroff(self):
+        pass
+
+    def vm_delete(self):
+        pass

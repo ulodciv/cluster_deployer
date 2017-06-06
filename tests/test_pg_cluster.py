@@ -184,8 +184,9 @@ class ClusterContext:
 
 with open("tests/tests.json") as fh:
     clusters_json = json.load(fh)
-    # del clusters_json["CentosPg9_6"]
-    # del clusters_json["CentosPg10"]
+    # del clusters_json["cluster1"]
+    # del clusters_json["cluster2"]
+    # del clusters_json["cluster3"]
 
 
 @pytest.fixture(scope="session", params=list(clusters_json.keys()))
