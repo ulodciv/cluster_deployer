@@ -81,7 +81,6 @@ class PghaCluster(ClusterBase):
         master.pg_make_master(self.vms)
         master.pg_restart()
         master.pg_add_replication_slots(self.standbies)
-        master.add_temp_ipv4_to_iface(self.ha_get_vip_ipv4())
 
     def pgha_setup_slaves(self):
         master = self.master
@@ -96,7 +95,6 @@ class PghaCluster(ClusterBase):
 
     def pgha_setup_ra(self):
         master = self.master
-        master.del_temp_ipv4_to_iface(self.ha_get_vip_ipv4())
         master.ha_base_setup(self.vms)
         master.ha_set_migration_threshold(5)
         master.ha_set_resource_stickiness(10)
@@ -136,8 +134,8 @@ class PghaCluster(ClusterBase):
             f'op stop timeout=60s '
             f'op promote timeout=120s '
             f'op demote timeout=120s '
-            f'op monitor interval=10s timeout=10s role="Master" '
-            f'op monitor interval=11s timeout=10s role="Slave" '
+            f'op monitor interval=5s timeout=10s role="Master" '
+            f'op monitor interval=6s timeout=10s role="Slave" '
             f'op notify timeout=60s')
         master.ha_pcs_xml(
             f"resource master {self.pgha_resource_master} {self.pgha_resource} "

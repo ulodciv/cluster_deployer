@@ -120,3 +120,21 @@ class Ha(Ssh):
 
     def ha_set_migration_threshold(self, v: int):
         self.ssh_run_check(f"pcs resource defaults migration-threshold={v}")
+
+    def ha_get_scores_dict(self, resource):
+        s = self.ssh_run_check("crm_node -p", get_output=True)
+        d = {n: self.ha_get_score(resource, n) for n in s.split()}
+        return {k: int(v) for k, v in d.items() if v}
+
+    def ha_get_score(self, resource, node=None):
+        cmd = f"crm_master -r {resource}"
+        if node:
+            cmd += f" -N {node}"
+        s = self.ssh_run_check(cmd, get_output=True)
+        if not s:
+            return None
+        # scope=nodes  name=master-pg value=998
+        parts = [p.partition("=") for p in s.split()]
+        d = {p[0]: p[2] for p in parts}
+        return d.get("value", None)
+

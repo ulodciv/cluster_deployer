@@ -1,15 +1,23 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
-from itertools import chain
+from itertools import chain, count
 from pathlib import PurePosixPath
+from threading import Event
 from time import sleep, time
 import json
 
 import pytest
 
+from deploylib.deployer_error import DeployerError
 from pgha_deployer import PghaCluster
 
 DB = "demo_db"
+
+
+def raise_first(futures):
+    for future in as_completed(futures):
+        if future.exception():
+            raise future.exception()
 
 
 def expect_query_results(query_func, expected_results, timeout):
@@ -119,19 +127,31 @@ def expect_standby_is_replicating(master, standby_name, timeout):
         sleep(1)
 
 
+def expect_node_has_highest_standby_positive_score(cluster, node_name, timeout):
+    start_time = time()
+    master = cluster.master
+    while True:
+        scores = cluster.master.ha_get_scores_dict(cluster.pgha_resource)
+        del scores[master.name]
+        if node_name in scores and scores[node_name] > 0 and (
+                len([n for n in scores
+                     if scores[n] >= scores[node_name]]) <= 1):
+            print(f"{node_name} has the highest positive score: {scores}")
+            return True
+        print(f"{node_name} doesn't have the highest positive score: {scores}")
+        if time() - start_time > timeout:
+            return False
+        sleep(0.2)
+
+
 def expect_nodes_have_positive_scores(cluster, vms, timeout):
     start_time = time()
     while True:
         ready = []
         for vm in vms:
-            s = vm.ssh_run_check(
-                f"crm_master -r {cluster.pgha_resource}", get_output=True)
-            if s:
-                # scope=nodes  name=master-pg value=998
-                parts = [p.partition("=") for p in s.split()]
-                d = {p[0]: p[2] for p in parts}
-                if int(d.get("value", "0")) > 0:
-                    ready.append(vm.name)
+            score = vm.ha_get_score(cluster.pgha_resource)
+            if score and int(score) > 0:
+                ready.append(vm.name)
         if len(ready) == len(vms):
             print(f"all nodes {ready} have positive scores ")
             return True
@@ -170,8 +190,8 @@ class ClusterContext:
         sleep(2)
         cluster.master = cluster.vms[0]
         master = cluster.master
-        for vm in cluster.vms:
-            vm.vm_start()
+        with ThreadPoolExecutor() as e:
+            raise_first([e.submit(vm.vm_start) for vm in cluster.vms])
         for vm in cluster.vms:
             vm.wait_until_port_is_open(22, 10)
         master.ha_unstandby_all()
@@ -180,6 +200,17 @@ class ClusterContext:
         expect_nodes_have_positive_scores(cluster, cluster.vms, 30)
         for standby in cluster.standbies:
             assert expect_standby_is_replicating(master, standby.name, 30)
+
+
+def do_updates_until_error(master, stop_event: Event):
+    try:
+        for i in count():
+            if stop_event.is_set():
+                return
+            master.pg_execute("update person.addresstype set name='foo{}' "
+                              "where addresstypeid=1".format(i), db=DB)
+    except:
+        pass
 
 
 with open("tests/tests.json") as fh:
@@ -311,6 +342,93 @@ def test_kill_standby_machine(cluster_context: ClusterContext):
         partial(killed_standby.pg_execute, select_sql, db=DB), [['a']], 10)
 
 
+def test_standby_with_most_wal_gets_promoted(cluster_context: ClusterContext):
+    """
+    Avec plusieurs standby, tu peux te retrouver dans cette situation là:
+
+        received  replayed
+    S1   1/11111  1/11111
+    S2   1/22222  1/11100
+
+    Action: While continuously updating the DB:
+        Action: Stop WAL replayer on a standby (stdby1) (pg_xlog_replay_pause/
+                    pg_wal_replay_pause)
+        Action: Sleep a bit to let other standbies replayer keep advancing
+        Action: Stop WAL receiver on other standbies (pg_drop_replication_slot)
+        Action: Sleep a bit to let stdby1 receive more WAL from master
+    Check: stdby1 gets the highest promotion score within X seconds
+    Action: Kill master
+    Action: Start WAL replayer on stdby1 (pg_xlog_replay_resume/
+                pg_wal_replay_resume)
+    Check: stdby1 gets promoted directly (this will cause replication slots to
+                be created)
+    Check: other standbies replicate from stdby1 (now a master)
+    Check: updates on stdby1 (now a master) propagate to other standbies
+    """
+    cluster_context.setup()
+    cluster = cluster_context.cluster
+    master = cluster.master
+
+    if len(cluster.vms) < 3:
+        print("This test requires more than two nodes")
+        return
+
+    with ThreadPoolExecutor() as e:
+        stop_updates_event = Event()
+        future_updates = e.submit(
+            do_updates_until_error, master, stop_updates_event)
+        stdby1 = cluster.standbies[-1]
+        if master.pg_version == "10":
+            stdby1.pg_execute("SELECT pg_wal_replay_pause()")
+        else:
+            stdby1.pg_execute("SELECT pg_xlog_replay_pause()")
+        sleep(3)
+        slots_to_delete = [stdby.pg_slot for stdby in cluster.standbies[:-1]]
+        while slots_to_delete:
+            slot = slots_to_delete[0]
+            master.pg_execute(
+                f"SELECT pg_terminate_backend(active_pid) "
+                f"FROM pg_replication_slots "
+                f"WHERE slot_name='{slot}' AND active_pid IS NOT NULL")
+            try:
+                master.pg_execute(
+                    f"SELECT pg_drop_replication_slot('{slot}')")
+            except DeployerError:
+                print(f"couldn't drop {slot}")
+                continue
+            slots_to_delete.remove(slot)
+            print(f"dropped {slot}")
+        sleep(2)
+        scores_ok = expect_node_has_highest_standby_positive_score(
+            cluster, stdby1.name, 10)
+        # tell thread to stop
+        stop_updates_event.set()
+        future_updates.result()
+    assert scores_ok, (f"{stdby1.name} did not get the highest positive "
+                       f"standby score")
+    master.vm_poweroff()
+    if master.pg_version == "10":
+        stdby1.pg_execute("SELECT pg_wal_replay_resume()")
+    else:
+        stdby1.pg_execute("SELECT pg_xlog_replay_resume()")
+
+    standbies = cluster.standbies
+    new_master = standbies[-1]
+    killed_master = master
+    remaining_standbies = standbies[:-1]
+    cluster.master = new_master
+
+    assert expect_master_node(cluster, new_master.name, 10)
+    for standby in remaining_standbies:
+        assert expect_standby_is_replicating(new_master, standby.name, 30)
+    new_master.pg_execute(
+        "update person.addresstype set name='x6' where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for standby in remaining_standbies:
+        assert expect_query_results(
+            partial(standby.pg_execute, select_sql, db=DB), [['x6']], 10)
+
+
 def test_kill_master_machine(cluster_context: ClusterContext):
     """
     Action: poweroff standbies while running updates on master
@@ -331,29 +449,15 @@ def test_kill_master_machine(cluster_context: ClusterContext):
         print("This test requires more than two nodes")
         return
 
-    def run_updates_until_error():
-        try:
-            for i in range(10000):
-                master.pg_execute(
-                    "update person.addresstype "
-                    "set name='foo{}' where addresstypeid=1".format(i), db=DB)
-        except:
-            pass
-
-    def poweroff_standbies():
+    with ThreadPoolExecutor() as e:
+        stop_updates_event = Event()
+        future_updates = e.submit(
+            do_updates_until_error, master, stop_updates_event)
         for stdby in cluster.standbies:
             stdby.vm_poweroff()
             sleep(3)  # make last standby more up to date
-
-    def raise_first(futures):
-        for future in as_completed(futures):
-            if future.exception():
-                raise future.exception()
-
-    with ThreadPoolExecutor() as e:
-        raise_first([
-            e.submit(run_updates_until_error),
-            e.submit(poweroff_standbies)])
+        stop_updates_event.set()
+        future_updates.result()
 
     master.vm_poweroff()
 

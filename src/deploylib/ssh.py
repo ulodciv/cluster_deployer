@@ -68,7 +68,8 @@ class AuthorizedKeys:
 
 
 class Ssh(Linux):
-    ssh_lock = RLock()
+    ssh_file_lock = RLock()
+    ssh_cx_lock = RLock()
 
     def __init__(self, paramiko_key, paramiko_pub_key, **kwargs):
         super(Ssh, self).__init__(**kwargs)
@@ -117,7 +118,7 @@ class Ssh(Linux):
 
     def get_lock_for_file(self, f):
         f = str(f)
-        with Ssh.ssh_lock:
+        with Ssh.ssh_file_lock:
             if f not in self.file_locks:
                 self.file_locks[f] = RLock()
         return self.file_locks[f]
@@ -209,19 +210,20 @@ class Ssh(Linux):
 
     @contextmanager
     def open_ssh(self, user="root"):
-        with SSHClient() as client:
-            client.set_missing_host_key_policy(AutoAddPolicy())
-            try:
-                client.connect(self.ip, username=user, pkey=self.paramiko_key)
-            except AuthenticationException as e:
-                raise DeployerError(
-                    f"AuthenticationException {user}@{self.ip} ({self.name}):\n"
-                    f"{e}")
-            except TimeoutError as e:
-                raise DeployerError(
-                    f"TimeoutError {user}@{self.ip} ({self.name}):\n"
-                    f"{e}")
-            yield client
+        with Ssh.ssh_cx_lock:
+            with SSHClient() as client:
+                client.set_missing_host_key_policy(AutoAddPolicy())
+                try:
+                    client.connect(self.ip, username=user, pkey=self.paramiko_key)
+                except AuthenticationException as e:
+                    raise DeployerError(
+                        f"AuthenticationException {user}@{self.ip} ({self.name}):\n"
+                        f"{e}")
+                except TimeoutError as e:
+                    raise DeployerError(
+                        f"TimeoutError {user}@{self.ip} ({self.name}):\n"
+                        f"{e}")
+                yield client
 
     def _ssh_run(self, user, ssh, command, *,
                  check=False, get_output=True):
@@ -239,7 +241,7 @@ class Ssh(Linux):
             exit_status = o.channel.recv_exit_status()
             if exit_status != 0:
                 raise DeployerError(
-                    f"{user}@{self.name}: got exit status {exit_status} for:\n"
+                    f"{user}@{self.name}: exit status {exit_status} for:\n"
                     f"{command}\n"
                     f"stderr: {stderr}")
         if get_output:
@@ -248,7 +250,7 @@ class Ssh(Linux):
     def ssh_run(self, command_or_commands, *,
                 user="root", check=False, get_output=False):
         with self.open_ssh(user) as ssh:
-            if type(command_or_commands) is str:
+            if isinstance(command_or_commands, str):
                 return self._ssh_run(user, ssh, command_or_commands,
                                      check=check, get_output=get_output)
             else:
