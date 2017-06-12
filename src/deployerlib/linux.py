@@ -10,7 +10,7 @@ from time import sleep, time
 
 from .deployer_error import DeployerError
 from .hosts_file import CentOsConfigFile, HostsFile
-from .vm import VmBase
+from .vm import VM
 
 
 class Distro(Enum):
@@ -27,7 +27,7 @@ class LinuxUser:
         self.public_ssh_key = None
 
 
-class Linux(VmBase):
+class Linux(VM):
 
     def __init__(self, *, static_ip, root_password, users, **kwargs):
         super(Linux, self).__init__(**kwargs)

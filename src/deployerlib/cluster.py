@@ -12,7 +12,7 @@ def raise_first(futures):
             raise future.exception()
 
 
-class ClusterBase:
+class Cluster:
 
     @staticmethod
     def configure_logging():

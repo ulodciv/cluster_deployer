@@ -2,14 +2,14 @@ import json
 
 import pytest
 
-from pgha_deployer import PghaCluster
+from pgha_deployer import HaPgCluster
 
 
 @pytest.fixture
 def cluster():
     with open("config/tests.json") as fh:
         cluster_json = json.load(fh)
-    return PghaCluster(cluster_def=cluster_json)
+    return HaPgCluster(cluster_def=cluster_json)
 
 
 def test_ha_nodes_status(cluster, monkeypatch):

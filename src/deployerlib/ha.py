@@ -1,13 +1,13 @@
 import xml.etree.ElementTree as ET
 
-from deploylib.ssh import Ssh
+from deployerlib.ssh import SSH
 
 
-class Ha(Ssh):
+class HA(SSH):
     ha_cluster_xml_file = f"cluster.xml"
 
     def __init__(self, *, cluster_name, **kwargs):
-        super(Ha, self).__init__(**kwargs)
+        super(HA, self).__init__(**kwargs)
         self.cluster_name = cluster_name
 
     def ha_base_setup(self, vms):

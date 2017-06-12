@@ -1,8 +1,8 @@
 #!/usr/bin/env python3.6
 from unittest import TestCase
 
-from deploylib.deployer_error import DeployerError
-from deploylib.hosts_file import CentOsConfigFile, HostsFile
+from deployerlib.deployer_error import DeployerError
+from deployerlib.hosts_file import CentOsConfigFile, HostsFile
 
 HOSTS1 = """\
 127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4

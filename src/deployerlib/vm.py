@@ -11,9 +11,9 @@ from time import sleep
 from .deployer_error import DeployerError
 
 
-class VmBase(ABC):
+class VM(ABC):
     def __init__(self, *, ova, name, **kwargs):
-        super(VmBase, self).__init__()
+        super(VM, self).__init__()
         self.name = name
         self.ova = ova
         self.logger = logging.getLogger(self.name)
@@ -60,7 +60,7 @@ class VmBase(ABC):
         self.log("done sleeping")
 
 
-class Vbox(VmBase):
+class VBox(VM):
     IP_PROP = '"/VirtualBox/GuestInfo/Net/0/V4/IP"'
     IP_RE = re.compile(r"[0-9]+(?:\.\d+){3}")
     VM_LIST_RE = re.compile(r'(?:\"(?P<vmname>.*)\")', re.M)
@@ -74,17 +74,17 @@ class Vbox(VmBase):
     vbox_lock = Lock()
 
     def __init__(self, *, vboxmanage="", **kwargs):
-        super(Vbox, self).__init__(**kwargs)
+        super(VBox, self).__init__(**kwargs)
         if vboxmanage:
             self.vboxmanage = vboxmanage
         else:
             self.vboxmanage = self.get_vboxmanage()
 
     def get_vboxmanage(self):
-        with Vbox.vbox_lock:
-            if Vbox._vboxmanage is None:
-                Vbox._vboxmanage = self.find_vboxmanage()
-        return Vbox._vboxmanage
+        with VBox.vbox_lock:
+            if VBox._vboxmanage is None:
+                VBox._vboxmanage = self.find_vboxmanage()
+        return VBox._vboxmanage
 
     def find_vboxmanage(self):
         if platform.system() == "Linux":
@@ -128,42 +128,42 @@ class Vbox(VmBase):
         return res.stdout.decode()
 
     def get_vbox_hostonly_ifs(self):
-        with Vbox.vbox_lock:
-            if Vbox._vbox_hostonly_ifs is None:
+        with VBox.vbox_lock:
+            if VBox._vbox_hostonly_ifs is None:
                 s = self.run_vboxmanage('list hostonlyifs')
-                Vbox._vbox_hostonly_ifs = re.findall(
+                VBox._vbox_hostonly_ifs = re.findall(
                         self.RE_HOSTONLYIFS, s, re.M)
-        return Vbox._vbox_hostonly_ifs
+        return VBox._vbox_hostonly_ifs
 
     def get_existing_vms(self):
-        with Vbox.vbox_lock:
-            if Vbox._vbox_existing_vms is None:
+        with VBox.vbox_lock:
+            if VBox._vbox_existing_vms is None:
                 s = self.run_vboxmanage('list vms')
-                Vbox._vbox_existing_vms = Vbox.VM_LIST_RE.findall(s)
-        return Vbox._vbox_existing_vms
+                VBox._vbox_existing_vms = VBox.VM_LIST_RE.findall(s)
+        return VBox._vbox_existing_vms
 
     def get_running_vms(self):
-        with Vbox.vbox_lock:
-            if Vbox._vbox_running_vms is None:
+        with VBox.vbox_lock:
+            if VBox._vbox_running_vms is None:
                 s = self.run_vboxmanage(f'list runningvms')
-                Vbox._vbox_running_vms = Vbox.VM_LIST_RE.findall(s)
-        return Vbox._vbox_running_vms
+                VBox._vbox_running_vms = VBox.VM_LIST_RE.findall(s)
+        return VBox._vbox_running_vms
 
     def get_disk_unit(self):
-        with Vbox.vbox_lock:
-            if self.ova not in Vbox._vbox_ova_disk_units:
+        with VBox.vbox_lock:
+            if self.ova not in VBox._vbox_ova_disk_units:
                 s = self.run_vboxmanage(f"import {self.ova} -n")
                 p = re.compile(r'(?P<n>\d+): Hard disk', re.M)
-                Vbox._vbox_ova_disk_units[self.ova] = p.findall(s)[0]
-        return Vbox._vbox_ova_disk_units[self.ova]
+                VBox._vbox_ova_disk_units[self.ova] = p.findall(s)[0]
+        return VBox._vbox_ova_disk_units[self.ova]
 
     def get_vbox_machine_dir(self):
-        with Vbox.vbox_lock:
-            if Vbox._vbox_machine_dir is None:
+        with VBox.vbox_lock:
+            if VBox._vbox_machine_dir is None:
                 s = self.run_vboxmanage("list systemproperties")
                 p = re.compile(r'Default machine folder:\s*(?P<v>.*)')
-                Vbox._vbox_machine_dir = Path(p.findall(s)[0].strip())
-        return Vbox._vbox_machine_dir
+                VBox._vbox_machine_dir = Path(p.findall(s)[0].strip())
+        return VBox._vbox_machine_dir
 
     def vm_deploy(self, fail_if_exists=False):
         name = self.name
@@ -223,7 +223,7 @@ class Vbox(VmBase):
             f"with {sleep_secs}s between each attempt")
 
 
-class VmWare(VmBase):
+class VmWare(VM):
     def __init__(self, **kwargs):
         super(VmWare, self).__init__(**kwargs)
 

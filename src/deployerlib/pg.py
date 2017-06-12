@@ -6,7 +6,7 @@ from time import sleep
 
 from .deployer_error import DeployerError
 from .linux import Distro
-from .ssh import Ssh
+from .ssh import SSH
 
 
 class PgConfigReader(OrderedDict):
@@ -39,7 +39,7 @@ class PgConfigReader(OrderedDict):
         self[k] = val1.strip("'") if val1 else val2
 
 
-class Postgres(Ssh):
+class PG(SSH):
     pg_lock = Lock()
 
     def __init__(self, *,
@@ -51,7 +51,7 @@ class Postgres(Ssh):
                  pg_data_directory=None,
                  pg_bindir=None,
                  **kwargs):
-        super(Postgres, self).__init__(**kwargs)
+        super(PG, self).__init__(**kwargs)
         self.pg_version = pg_version
         self.pg_user = pg_user
         self.pg_repl_user = pg_repl_user
@@ -290,7 +290,7 @@ class Postgres(Ssh):
             f"host={master_host} port={self.pg_port} user={repl_user}")
         self._pg_add_to_recovery_conf("primary_slot_name", self.pg_slot)
 
-    def pg_backup(self, master: 'Postgres'):
+    def pg_backup(self, master: 'PG'):
         pg_basebackup = self.pg_bindir / "pg_basebackup"
         self.ssh_run_check([
             f"mv {master.pg_data_directory} data_old",

@@ -7,15 +7,15 @@ from ipaddress import IPv4Interface, ip_interface, IPv4Address
 from pathlib import PurePosixPath, Path
 from time import time
 
-from deploylib.cluster import ClusterBase
-from deploylib.ha import Ha
-from deploylib.postgres import Postgres
-from deploylib.vm import Vbox
+from deployerlib.cluster import Cluster
+from deployerlib.ha import HA
+from deployerlib.pg import PG
+from deployerlib.vm import VBox
 
 
-class PghaVm(Ha, Postgres, Vbox):
+class HaPgVBox(HA, PG, VBox):
     def __init__(self, **kwargs):
-        super(PghaVm, self).__init__(**kwargs)
+        super(HaPgVBox, self).__init__(**kwargs)
 
     def pgha_deploy_db(self, demo_db_file):
         local_db_file = Path(demo_db_file)
@@ -35,11 +35,11 @@ class PghaVm(Ha, Postgres, Vbox):
         self.ssh_run_check(f'rm -rf /tmp/{db}')
 
 
-class PghaCluster(ClusterBase):
+class HaPgCluster(Cluster):
 
     def __init__(self, *, cluster_def, **kwargs):
-        super(PghaCluster, self).__init__(
-            cluster_def=cluster_def, vm_class=PghaVm, **kwargs)
+        super(HaPgCluster, self).__init__(
+            cluster_def=cluster_def, vm_class=HaPgVBox, **kwargs)
         self.master = None
         self.demo_db = cluster_def["demo_db"]
         self.pgha_file = cluster_def["pgha_file"]
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     args = parse_args()
     start = time()
     with open(args.json_file) as f:
-        cluster = PghaCluster(
+        cluster = HaPgCluster(
             cluster_def=json.load(f), use_threads=args.use_threads)
     cluster.deploy()
     logging.getLogger("main").debug(f"took {timedelta(seconds=time() - start)}")

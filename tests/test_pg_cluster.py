@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-from deploylib.deployer_error import DeployerError
-from pgha_deployer import PghaCluster
+from deployerlib.deployer_error import DeployerError
+from pgha_deployer import HaPgCluster
 
 DB = "demo_db"
 
@@ -164,7 +164,7 @@ def expect_nodes_have_positive_scores(cluster, vms, timeout):
 
 class ClusterContext:
     def __init__(self, test_cluster):
-        self.cluster = PghaCluster(cluster_def=test_cluster)
+        self.cluster = HaPgCluster(cluster_def=test_cluster)
         cluster = self.cluster
         cluster.deploy()
         expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 30)

@@ -67,12 +67,12 @@ class AuthorizedKeys:
         return "".join(key.get_as_line() + "\n" for key in self.keys.values())
 
 
-class Ssh(Linux):
+class SSH(Linux):
     ssh_file_lock = RLock()
     ssh_cx_lock = RLock()
 
     def __init__(self, paramiko_key, paramiko_pub_key, **kwargs):
-        super(Ssh, self).__init__(**kwargs)
+        super(SSH, self).__init__(**kwargs)
         self.paramiko_key = paramiko_key
         self.paramiko_pub_key = paramiko_pub_key
         self.file_locks = {}
@@ -118,7 +118,7 @@ class Ssh(Linux):
 
     def get_lock_for_file(self, f):
         f = str(f)
-        with Ssh.ssh_file_lock:
+        with SSH.ssh_file_lock:
             if f not in self.file_locks:
                 self.file_locks[f] = RLock()
         return self.file_locks[f]
@@ -210,7 +210,7 @@ class Ssh(Linux):
 
     @contextmanager
     def open_ssh(self, user="root"):
-        with Ssh.ssh_cx_lock:
+        with SSH.ssh_cx_lock:
             with SSHClient() as client:
                 client.set_missing_host_key_policy(AutoAddPolicy())
                 try:
