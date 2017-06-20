@@ -273,12 +273,48 @@ def test_pcs_standby(cluster_context: ClusterContext):
     for stdby in cluster.standbies[:-1]:
         assert expect_query_results(
             partial(stdby.pg_execute, select_sql, db=DB), [['y']], 3)
+
+    # check that replication slot is NOT deleted for host
+    rs = master.pg_execute("SELECT slot_name FROM pg_replication_slots")
+    slots = [r[0] for r in rs]
+    assert len(slots) == len(cluster.standbies)
+    for stdby in cluster.standbies:
+        assert stdby.pg_slot in slots
+
     master.ha_unstandby(standby)
     assert expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 15)
     assert standby.pg_execute("select 1") == [['1']]
     select_sql = "select name from person.addresstype where addresstypeid=1"
     assert expect_query_results(
         partial(standby.pg_execute, select_sql, db=DB), [['y']], 6)
+
+
+def test_take_slave_out_of_cluster(cluster_context: ClusterContext):
+    cluster_context.setup()
+    cluster = cluster_context.cluster
+    master = cluster.master
+    standby = cluster.standbies[-1]
+    master.ha_stop(standby)
+    assert expect_online_nodes(
+        cluster, {vm.name for vm in cluster.vms[:-1]}, 20)
+    with pytest.raises(Exception):
+        standby.pg_execute("select 1")
+    master.pg_execute("update person.addresstype set name='y' "
+                      "where addresstypeid=1", db=DB)
+    select_sql = "select name from person.addresstype where addresstypeid=1"
+    for stdby in cluster.standbies[:-1]:
+        assert expect_query_results(
+            partial(stdby.pg_execute, select_sql, db=DB), [['y']], 3)
+
+    # check that replication slot is deleted for host
+    rs = master.pg_execute("SELECT slot_name FROM pg_replication_slots")
+    slots = [r[0] for r in rs]
+    assert len(slots) == len(cluster.standbies[:-1])
+    for stdby in cluster.standbies[:-1]:
+        assert stdby.pg_slot in slots
+
+    # TODO: test getting not enought kept WAL on master, and try
+    # to pg backup the diff
 
 
 def test_trigger_switchover(cluster_context: ClusterContext):

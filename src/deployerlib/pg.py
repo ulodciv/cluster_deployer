@@ -216,11 +216,11 @@ class PG(SSH):
         self._pg_add_to_conf(param, val, self.pg_recovery_file)
 
     def pg_execute(self, sql, *, db="postgres"):
-        rs, rs_bash = chr(30), r'\036'  # record separator
-        fs, fs_bash = chr(3), r'\003'  # end of text
+        rs, rs_bash = chr(30), r'\\036'  # record separator
+        fs, fs_bash = chr(3), r'\\003'  # end of text
         cmd = [str(self.psql), "-p", self.pg_port, "-d", db, "-v",
                "ON_ERROR_STOP=1",
-               "-qXAt", "-R", rs_bash, "-F", fs_bash, "-c", f'"{sql};"']
+               "-qXAt", "-R", rs, "-F", fs, "-c", f'"{sql};"']
         o = self.ssh_run_check(
             " ".join(cmd), user=self.pg_user, get_output=True)
         if o:

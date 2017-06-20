@@ -1,6 +1,6 @@
 import re
 import socket
-from abc import abstractmethod, ABC
+from abc import abstractmethod
 from collections import OrderedDict
 from contextlib import contextmanager
 from enum import Enum, auto
