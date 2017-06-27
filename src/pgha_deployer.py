@@ -13,9 +13,9 @@ from deployerlib.pg import PG
 from deployerlib.vm import VBox
 
 
-class HaPgVBox(HA, PG, VBox):
+class HaPgVm(HA, PG, VBox):
     def __init__(self, **kwargs):
-        super(HaPgVBox, self).__init__(**kwargs)
+        super(HaPgVm, self).__init__(**kwargs)
 
     def pgha_deploy_db(self, demo_db_file):
         local_db_file = Path(demo_db_file)
@@ -39,7 +39,7 @@ class HaPgCluster(Cluster):
 
     def __init__(self, *, cluster_def, **kwargs):
         super(HaPgCluster, self).__init__(
-            cluster_def=cluster_def, vm_class=HaPgVBox, **kwargs)
+            cluster_def=cluster_def, vm_class=HaPgVm, **kwargs)
         self.master = None
         self.demo_db = cluster_def["demo_db"]
         self.pgha_file = cluster_def["pgha_file"]
