@@ -13,9 +13,9 @@ from deployerlib.pg import PG
 from deployerlib.vm import VBox
 
 
-class HaPgVm(HA, PG, VBox):
+class PgHaVm(HA, PG, VBox):
     def __init__(self, **kwargs):
-        super(HaPgVm, self).__init__(**kwargs)
+        super(PgHaVm, self).__init__(**kwargs)
 
     def pgha_deploy_db(self, demo_db_file):
         local_db_file = Path(demo_db_file)
@@ -35,11 +35,11 @@ class HaPgVm(HA, PG, VBox):
         self.ssh_run_check(f'rm -rf /tmp/{db}')
 
 
-class HaPgCluster(Cluster):
+class PgHaCluster(Cluster):
 
     def __init__(self, *, cluster_def, **kwargs):
-        super(HaPgCluster, self).__init__(
-            cluster_def=cluster_def, vm_class=HaPgVm, **kwargs)
+        super(PgHaCluster, self).__init__(
+            cluster_def=cluster_def, vm_class=PgHaVm, **kwargs)
         self.master = None
         self.demo_db = cluster_def["demo_db"]
         self.pgha_file = cluster_def["pgha_file"]
@@ -90,8 +90,8 @@ class HaPgCluster(Cluster):
                 vm.pg_write_recovery_conf()
             else:
                 vm.pg_write_recovery_conf(master.name)
-        self.call([partial(m.pg_start) for m in self.standbies])
-        self.call([partial(m.pg_stop) for m in self.vms])
+        self.call([partial(m.pg_start_stop) for m in self.standbies])
+        master.pg_stop()
 
     def pgha_setup_ra(self):
         master = self.master
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     args = parse_args()
     start = time()
     with open(args.json_file) as f:
-        cluster = HaPgCluster(
+        cluster = PgHaCluster(
             cluster_def=json.load(f), use_threads=args.use_threads)
     cluster.deploy()
     logging.getLogger("main").debug(f"took {timedelta(seconds=time() - start)}")

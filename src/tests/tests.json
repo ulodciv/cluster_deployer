@@ -1,7 +1,7 @@
 {
   "cluster1":
   {
-  "ova": "../ovas/centos7_pg96_sources_1.ova",
+  "ova": "../../ovas/centos7_pg96_sources_1.ova",
   "cluster_name": "cluster1",
   "virtual_ip": "192.168.56.139",
   "users": [
@@ -9,16 +9,16 @@
     "postgres"
   ],
   "pgha_resource": "pg",
-  "pgha_file": "../pgha/pgha.py",
+  "pgha_file": "../../pgha/pgha.py",
   "pg_bindir": "/usr/local/pgsql/bin",
   "pg_data_directory": "/usr/local/pgsql/data",
   "pg_config_file": "/usr/local/pgsql/data/postgresql.conf",
   "pg_version": "9.6",
   "pg_user": "postgres",
   "root_password": "root",
-  "key_file": "key/rsa_private.key",
-  "pub_key_file": "key/rsa_pub.key",
-  "demo_db": "demo_db.xz",
+  "key_file": "../key/rsa_private.key",
+  "pub_key_file": "../key/rsa_pub.key",
+  "demo_db": "../demo_db.xz",
   "hosts": [
     {
       "name": "sources96-1",
@@ -35,7 +35,7 @@
   ]
 },
   "cluster2": {
-    "ova": "../ovas/centos7_pg96_1.ova",
+    "ova": "../../ovas/centos7_pg96_2.ova",
     "cluster_name": "cluster2",
     "virtual_ip": "192.168.56.149",
     "users": [
@@ -43,14 +43,14 @@
       "postgres"
     ],
     "pgha_resource": "pg",
-    "pgha_file": "../pgha/pgha.py",
+    "pgha_file": "../../pgha/pgha.py",
     "pg_version": "9.6",
     "pg_port": "5432",
     "pg_user": "postgres",
     "root_password": "root",
-    "key_file": "key/rsa_private.key",
-    "pub_key_file": "key/rsa_pub.key",
-    "demo_db": "demo_db.xz",
+    "key_file": "../key/rsa_private.key",
+    "pub_key_file": "../key/rsa_pub.key",
+    "demo_db": "../demo_db.xz",
     "hosts": [
       {
         "name": "pg9-1",
@@ -67,7 +67,7 @@
     ]
   },
   "cluster3": {
-    "ova": "../ovas/centos7_pg10_1.ova",
+    "ova": "../../ovas/centos7_pg10_1.ova",
     "cluster_name": "cluster3",
     "virtual_ip": "192.168.56.159",
     "users": [
@@ -75,14 +75,14 @@
       "postgres"
     ],
     "pgha_resource": "pg",
-    "pgha_file": "../pgha/pgha.py",
+    "pgha_file": "../../pgha/pgha.py",
     "pg_version": "10",
     "pg_port": "5432",
     "pg_user": "postgres",
     "root_password": "root",
-    "key_file": "key/rsa_private.key",
-    "pub_key_file": "key/rsa_pub.key",
-    "demo_db": "demo_db.xz",
+    "key_file": "../key/rsa_private.key",
+    "pub_key_file": "../key/rsa_pub.key",
+    "demo_db": "../demo_db.xz",
     "hosts": [
       {
         "name": "pg10-1",

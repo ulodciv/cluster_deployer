@@ -305,6 +305,10 @@ class PG(SSH):
     def pg_drop_user(self, user):
         self.pg_execute(f"DROP USER {user}")
 
+    def pg_start_stop(self):
+        self.pg_start()
+        self.pg_stop()
+
     def pg_stop(self):
         self.ssh_run_check(
             f"{self.pg_ctl} stop -D {self.pg_data_directory} -w "
