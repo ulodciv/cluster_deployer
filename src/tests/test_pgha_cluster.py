@@ -381,46 +381,6 @@ def test_kill_standby_machine(cluster_context: ClusterContext):
         partial(killed_standby.pg_execute, select_sql, db=DB), [['a']], 10)
 
 
-def test_kill_standby_machine(cluster_context: ClusterContext):
-    """
-    Action: poweroff a standby
-    Action: sleep 15 seconds
-    Check: crm_node -p: excludes powered off node
-    Action: execute an update
-    Check: remaining slaves are updated
-    Action: power on standby
-    Action: pcs cluster start standby
-    Check: crm_node -p: has all nodes
-    Check: started slave is updated
-    """
-    cluster_context.setup()
-    cluster = cluster_context.cluster
-    master = cluster.master
-
-    killed_standby = cluster.standbies[-1]
-    other_standbies = cluster.standbies[:-1]
-    killed_standby.vm_poweroff()
-    remaining_nodes = {master.name}
-    for standby in other_standbies:
-        remaining_nodes.add(standby.name)
-    assert expect_online_nodes(cluster, remaining_nodes, 20)
-    assert expect_master_node(cluster, master.name, 20)
-    master.pg_execute(
-        "update person.addresstype set name='a' where addresstypeid=1", db=DB)
-    select_sql = "select name from person.addresstype where addresstypeid=1"
-    for standby in other_standbies:
-        assert expect_query_results(
-            partial(standby.pg_execute, select_sql, db=DB), [['a']], 10)
-    killed_standby.vm_start()
-    sleep(15)
-    master.ha_start_all()
-    sleep(5)  # HACK: this should not be necessary
-    assert expect_online_nodes(cluster, {vm.name for vm in cluster.vms}, 25)
-    sleep(1)
-    assert expect_query_results(
-        partial(killed_standby.pg_execute, select_sql, db=DB), [['a']], 10)
-
-
 def test_standby_with_most_wal_gets_promoted2(cluster_context: ClusterContext):
     """
     Similar to test_standby_with_most_wal_gets_promoted1, but trick pacemaker

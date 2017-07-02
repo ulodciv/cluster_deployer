@@ -265,7 +265,7 @@ class PG(SSH):
     def pg_make_master(self, all_hosts):
         self.pg_set_param("logging_collector", "on")
         self.pg_set_param("log_line_prefix", "'%m:[%p]:'")
-        self.pg_set_param("log_min_messages", "DEBUG5")
+        # self.pg_set_param("log_min_messages", "DEBUG5")
         self.pg_set_param("wal_level", "replica")
         self.pg_set_param("max_wal_senders", len(all_hosts) + 5)
         self.pg_set_param("max_replication_slots", len(all_hosts) + 5)
