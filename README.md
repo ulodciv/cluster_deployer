@@ -2,7 +2,7 @@
 
 - easily deploy corosync/pacemaker clusters
 - automate deploying clusters in a replicable manner
-- funcionally test Pacemaker Resource Agents by making it easier to write 
+- functionally test Pacemaker Resource Agents by making it easier to write 
 close-to-real-life tests
 
 The tool includes classes that deploy clusters with highly-available 
